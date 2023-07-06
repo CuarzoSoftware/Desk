@@ -11,6 +11,7 @@ static int blurFrames = 10;
 
 Desktop::Desktop(QScreen *screen, QWidget *parent) : QWidget(parent)
 {
+    setWindowTitle("DESK");
     setWindowFlags(Qt::FramelessWindowHint);
 
     this->screen = screen;

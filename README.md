@@ -1,2 +1,2 @@
 # Desk
-CuarzoOS file mannager.
+CuarzoOS file manager.

@@ -4,12 +4,14 @@
 #include <Core/Types.h>
 #include <Nodes/DeskItem.h>
 #include <Nodes/SelectionBox.h>
+#include <Nodes/DragStack.h>
 #include <Surfaces/ContextMenu.h>
 #include <CZ/Marco/Roles/MLayerSurface.h>
 #include <CZ/Marco/Roles/MDND.h>
 #include <CZ/AK/Nodes/AKContainer.h>
 #include <CZ/AK/Nodes/AKImageFrame.h>
 #include <CZ/Core/CZWeak.h>
+#include <CZ/Core/CZLinearAnimation.h>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -98,6 +100,7 @@ private:
     std::vector<std::unique_ptr<DeskItem>> m_items; // Entry order (auto placement order)
     Int32 m_iconSize { DESK_ICON_SIZE_DEFAULT };
     SkISize m_cell {};
+    Int32 m_marginTop { 0 }, m_marginRight { 0 }; // To the grid cells (see updateGrid())
     Int32 m_cols { 1 }, m_rows { 1 };
 
     // Pointer interaction
@@ -114,7 +117,29 @@ private:
 
     // Drag & drop (the session and its icon surface are reused)
     std::unique_ptr<MDND> m_dnd;
-    std::unique_ptr<AKImageFrame> m_dndIcon;
+    std::unique_ptr<DeskItem> m_dndItem;   // What's dragged (one item): a copy of it (rebuilt per drag)
+    std::unique_ptr<DragStack> m_dndStack; // What's dragged (several): their icons stacked, with a count
+
+    // Dragging several: copies of the other icons fly from their cells to the pointer, then the drag
+    // icon becomes the full stack (see gatherFinished()).
+    void gatherStep(Float64 progress) noexcept;
+    void gatherFinished() noexcept;
+    void setDragImage(const std::vector<std::shared_ptr<RImage>> &images, UInt32 count) noexcept;
+    // A copy of an icon flying to the pointer, in its own positioned box.
+    struct Flyer
+    {
+        Flyer(AKNode *parent, const SkPoint &from, Int32 depth) noexcept :
+            box(YGFlexDirectionColumn, false, parent), from(from), depth(depth) {}
+        AKContainer box;
+        IconView view { &box };
+        SkPoint from;
+        Int32 depth; // Its layer in the final stack (0 = front)
+    };
+    std::vector<std::unique_ptr<Flyer>> m_flyers;
+    std::vector<std::shared_ptr<RImage>> m_dragImages; // Back to front (the grabbed one last)
+    SkPoint m_dndPointer {};  // Latest pointer position over this surface while dragging
+    SkIPoint m_grabInIcon {}; // Pointer position within the grabbed icon
+    CZLinearAnimation m_gather;
     std::vector<std::string> m_dragKeys;
     std::string m_dragGrabKey;
     SkPoint m_dragOffset {}; // Pointer position within the grabbed item's cell

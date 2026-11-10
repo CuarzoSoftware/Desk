@@ -30,6 +30,17 @@ public:
     /// The (themed) icon of an entry. Never nullptr unless no generic icon could be loaded either.
     std::shared_ptr<RImage> icon(const DeskEntry &entry) noexcept;
 
+    /**
+     * @brief @p icon with its drop shadow, pre-rendered (cached per icon and screen scale).
+     *
+     * Rendered at the largest icon size and drawn scaled down: the icon fills the middle, with a
+     * ShadowMargin() border (fraction of the icon size) on every side for the shadow.
+     */
+    std::shared_ptr<RImage> shadowedIcon(const std::shared_ptr<RImage> &icon) noexcept;
+
+    /// The shadow border of shadowedIcon(), as a fraction of the icon size.
+    static float ShadowMargin() noexcept;
+
     /// Whether pictures of this type get a thumbnail instead of an icon.
     static bool HasThumbnail(const std::string &mimeType) noexcept;
 
@@ -83,6 +94,15 @@ private:
     };
 
     std::vector<Picture> m_pictures; // A few recent ones (one per screen size, usually)
+
+    struct Shadowed
+    {
+        std::weak_ptr<RImage> icon;
+        Int32 scale;
+        std::shared_ptr<RImage> image;
+    };
+
+    std::unordered_map<const RImage*, Shadowed> m_shadowed;
 };
 
 #endif // ASSETS_H

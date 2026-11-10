@@ -2,6 +2,7 @@
 #define MENUBAR_H
 
 #include <Core/Types.h>
+#include <Core/Settings.h>
 #include <CZ/Heaven/Heaven.h>
 #include <CZ/Core/CZObject.h>
 #include <filesystem>
@@ -18,7 +19,7 @@
  *
  * - **File**: New Window, New Folder, Open, Open With, Move to Trash, Eject, Set Desktop Picture
  * - **Edit**: Select All (Undo, Cut, Copy and Paste are shown disabled, like Finder with icons)
- * - **View**: Clean Up, icon size, desktop picture options
+ * - **View**: Sort By (Name, Kind, Size, Custom), Clean Up, icon size, desktop picture options
  * - **Go**: the user folders, Computer and Trash
  *
  * The shortcuts (⌘ = Ctrl) also work from the keyboard while the desktop has focus (shortcut()).
@@ -59,6 +60,8 @@ private:
 
     std::shared_ptr<CZ::HNClientAPI::HNAction> m_open, m_trash, m_eject, m_setPicture, m_larger, m_smaller, m_cleanUp;
     std::shared_ptr<CZ::HNClientAPI::HNToggle> m_showPicture, m_fill, m_fit, m_stretch;
+    std::vector<std::pair<std::shared_ptr<CZ::HNClientAPI::HNToggle>, Settings::SortBy>> m_sortToggles;
+    std::vector<std::pair<std::shared_ptr<CZ::HNClientAPI::HNToggle>, Int32>> m_sizeToggles;
 
     struct Shortcut
     {

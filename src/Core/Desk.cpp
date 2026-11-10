@@ -6,6 +6,8 @@
 #include <CZ/XDG/XDGDesktopEntry.h>
 #include <CZ/XDG/XDGMimeDatabase.h>
 #include <CZ/XDG/XDGTrash.h>
+#include <cmath>
+#include <CZ/XDG/XDGINI.h>
 #include <CZ/Core/CZEventSource.h>
 #include <CZ/Core/CZBus.h>
 #include <systemd/sd-bus.h>
@@ -41,6 +43,7 @@ Desk::Desk() noexcept
 
     xdgkit = XDGKit::Make();
     settings.load();
+    loadTopbarScale();
     assets.init();
     initDesktopDir();
     initWatches();
@@ -84,11 +87,8 @@ void Desk::onScreenPlugged(MScreen &screen) noexcept
         return;
 
     Log(CZInfo, CZLN, "Screen plugged: {}", screen.props().name);
-    new Background(screen); // Sets screen.userData
-
-    // The primary screen may change (e.g. a screen at 0,0 is plugged, or one is moved there).
-    screen.onPropsChanged.subscribe(this, [this](MScreen &, CZBitset<MScreen::Changes>){ updateIconsScreen(); });
-    updateIconsScreen();
+    auto *background { new Background(screen) }; // Sets screen.userData
+    background->setShowsIcons(true);
 }
 
 void Desk::onScreenUnplugged(MScreen &screen) noexcept
@@ -96,35 +96,72 @@ void Desk::onScreenUnplugged(MScreen &screen) noexcept
     auto *background { static_cast<Background*>(screen.userData) };
     screen.userData = nullptr;
     Log(CZInfo, CZLN, "Screen unplugged: {}", screen.props().name);
-    delete background;
-
-    // Called while the screen is still listed: move the icons once it's gone.
-    CZTimer::OneShot(0, [this](CZTimer *){ updateIconsScreen(); });
+    delete background; // Also clears it as the active / drag source desktop (weak references)
+    selectionChanged();  // The menus now act on another desktop
 }
 
-MScreen *Desk::iconsScreen() const noexcept
+void Desk::loadTopbarScale() noexcept
 {
-    MScreen *first { nullptr };
+    const fs::path path { Settings::FilePath().parent_path().parent_path() / "cz-firmament" / "firmament.conf" };
+    m_topbarScale = 1.f;
+    std::error_code ec;
 
-    for (MScreen *s : marco->screens())
-    {
-        if (!s->userData)
-            continue;
+    if (!fs::is_regular_file(path, ec))
+        return;
 
-        if (s->props().pos == SkIPoint::Make(0, 0))
-            return s;
+    if (auto ini { XDGINI::LoadFile(path) })
+        if (auto group { ini->find("Topbar") }; group != ini->end())
+            if (auto it { group->second.find("Scale") }; it != group->second.end())
+                m_topbarScale = std::clamp(std::strtof(it->second.c_str(), nullptr), 1.f, 4.f);
+}
 
-        if (!first)
-            first = s;
-    }
-
-    return first;
+Int32 Desk::topbarHeight() const noexcept
+{
+    return Int32(std::round(DESK_TOPBAR_HEIGHT * m_topbarScale));
 }
 
 Background *Desk::iconsBackground() const noexcept
 {
-    MScreen *screen { iconsScreen() };
-    return screen ? static_cast<Background*>(screen->userData) : nullptr;
+    if (m_activeBackground)
+        return static_cast<Background*>(m_activeBackground.get());
+
+    // Nothing used yet: the primary screen's (at 0,0), else any.
+    Background *any { nullptr };
+
+    for (MScreen *s : marco->screens())
+        if (auto *background { static_cast<Background*>(s->userData) })
+        {
+            if (s->props().pos == SkIPoint::Make(0, 0))
+                return background;
+
+            if (!any)
+                any = background;
+        }
+
+    return any;
+}
+
+Background *Desk::dragSource() const noexcept
+{
+    return static_cast<Background*>(m_dragSource.get());
+}
+
+void Desk::setDragSource(Background *background) noexcept
+{
+    m_dragSource.reset(background);
+}
+
+void Desk::setActiveBackground(Background *background) noexcept
+{
+    if (m_activeBackground.get() == background)
+        return;
+
+    // A single selection at a time: the menus and the keyboard act on it.
+    if (m_activeBackground)
+        static_cast<Background*>(m_activeBackground.get())->clearSelection();
+
+    m_activeBackground.reset(background);
+    selectionChanged();
 }
 
 void Desk::openFolder(const fs::path &path) noexcept
@@ -134,6 +171,78 @@ void Desk::openFolder(const fs::path &path) noexcept
     dir.name = path.filename().string();
     dir.mimeType = "inode/directory";
     open({ &dir });
+}
+
+void Desk::sortEntries(std::vector<DeskEntry> &entries) const noexcept
+{
+    // Disks always lead (the system one first): they aren't files.
+    const auto rank = [this](const DeskEntry &e) -> int {
+        if (e.kind == DeskEntry::Kind::Volume)
+            return e.internal ? 0 : 1;
+
+        // Kind: folders, then apps, then the other files (grouped by their kind's name).
+        if (settings.sortBy == Settings::SortBy::Kind)
+            return e.mimeType == "inode/directory" ? 2 : e.launcher ? 3 : 4;
+
+        if (settings.sortBy == Settings::SortBy::Size && e.mimeType == "inode/directory")
+            return 3; // Folders after files (no size), like Finder
+
+        return 2;
+    };
+
+    const auto byName = [](const DeskEntry &a, const DeskEntry &b) {
+        return strcasecmp(a.name.c_str(), b.name.c_str()) < 0;
+    };
+
+    std::stable_sort(entries.begin(), entries.end(), [&](const DeskEntry &a, const DeskEntry &b) {
+        if (const int ra { rank(a) }, rb { rank(b) }; ra != rb)
+            return ra < rb;
+
+        switch (settings.sortBy)
+        {
+        case Settings::SortBy::Kind:
+            if (const int c { strcasecmp(a.kindName.c_str(), b.kindName.c_str()) }; c != 0)
+                return c < 0;
+            return byName(a, b);
+        case Settings::SortBy::Size:
+            if (a.size != b.size)
+                return a.size > b.size; // Largest first
+            return byName(a, b);
+        default:
+            return byName(a, b);
+        }
+    });
+}
+
+void Desk::setSortBy(Settings::SortBy sortBy) noexcept
+{
+    if (settings.sortBy == sortBy)
+        return;
+
+    settings.sortBy = sortBy;
+    saveSettings();
+    sortEntries(m_entries);
+    onEntriesChanged.notify();
+}
+
+Int32 Desk::largerIconSize() const noexcept
+{
+    for (const Int32 size : DESK_ICON_SIZES)
+        if (size > settings.iconSize)
+            return size;
+
+    return settings.iconSize;
+}
+
+Int32 Desk::smallerIconSize() const noexcept
+{
+    Int32 smaller { settings.iconSize };
+
+    for (const Int32 size : DESK_ICON_SIZES)
+        if (size < settings.iconSize)
+            smaller = size;
+
+    return smaller;
 }
 
 void Desk::setIconSize(Int32 size) noexcept
@@ -158,15 +267,6 @@ void Desk::shortcut(UInt32 key, bool shift) noexcept
 {
     if (menuBar)
         menuBar->shortcut(key, shift);
-}
-
-void Desk::updateIconsScreen() noexcept
-{
-    MScreen *icons { iconsScreen() };
-
-    for (MScreen *s : marco->screens())
-        if (auto *background { static_cast<Background*>(s->userData) })
-            background->setShowsIcons(s == icons);
 }
 
 /* ----------------------------------------- D-Bus ----------------------------------------- */
@@ -269,9 +369,14 @@ void Desk::initWatches() noexcept
         fs::create_directories(Settings::FilePath().parent_path(), ec);
         m_configWatch = inotify_add_watch(m_inotify, Settings::FilePath().parent_path().c_str(), IN_CLOSE_WRITE | IN_MOVED_TO);
 
+        // Firmament's settings (its bar size: the icons stay clear of the bar).
+        const fs::path firmament { Settings::FilePath().parent_path().parent_path() / "cz-firmament" };
+        fs::create_directories(firmament, ec);
+        m_firmamentWatch = inotify_add_watch(m_inotify, firmament.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO);
+
         m_inotifySource = CZEventSource::Make(m_inotify, EPOLLIN, CZOwn::Borrow, [this](int fd, UInt32, CZEventSource*){
             alignas(inotify_event) char buf[4096];
-            bool desktop { false }, config { false };
+            bool desktop { false }, config { false }, firmament { false };
             ssize_t n;
 
             while ((n = read(fd, buf, sizeof(buf))) > 0)
@@ -284,6 +389,8 @@ void Desk::initWatches() noexcept
                         desktop = true;
                     else if (e->wd == m_configWatch && e->len > 0 && Settings::FilePath().filename() == e->name)
                         config = true;
+                    else if (e->wd == m_firmamentWatch && e->len > 0 && std::strcmp(e->name, "firmament.conf") == 0)
+                        firmament = true;
 
                     p += sizeof(inotify_event) + e->len;
                 }
@@ -294,6 +401,15 @@ void Desk::initWatches() noexcept
 
             if (config)
                 settingsFileChanged();
+
+            if (firmament)
+            {
+                const float old { m_topbarScale };
+                loadTopbarScale();
+
+                if (old != m_topbarScale)
+                    onIconsChanged.notify(); // Relayout below the new bar
+            }
         });
     }
 
@@ -470,6 +586,11 @@ std::vector<DeskEntry> Desk::scanFiles() noexcept
         file.name = name;
         file.mimeType = mime.typeForFile(file.path);
 
+        file.kindName = file.mimeType == "inode/directory" ? "Folder" : mime.description(file.mimeType);
+
+        if (std::error_code sec; dirEntry.is_regular_file(sec))
+            file.size = dirEntry.file_size(sec);
+
         if (file.mimeType == "application/x-desktop" || name.ends_with(".desktop"))
         {
             if ((file.launcher = XDGDesktopEntry::Load(file.path)) && !file.launcher->name.empty())
@@ -508,6 +629,7 @@ void Desk::rescan() noexcept
     std::vector<DeskEntry> entries { scanVolumes() };
     auto files { scanFiles() };
     entries.insert(entries.end(), std::make_move_iterator(files.begin()), std::make_move_iterator(files.end()));
+    sortEntries(entries);
 
     const auto same = [](const std::vector<DeskEntry> &a, const std::vector<DeskEntry> &b) {
         if (a.size() != b.size())
@@ -724,6 +846,12 @@ void Desk::settingsFileChanged() noexcept
     {
         Log(CZInfo, CZLN, "Background settings changed");
         onBackgroundChanged.notify();
+    }
+
+    if (old.sortBy != settings.sortBy)
+    {
+        sortEntries(m_entries);
+        onEntriesChanged.notify();
     }
 
     if (old.iconSize != settings.iconSize || old.positions != settings.positions)

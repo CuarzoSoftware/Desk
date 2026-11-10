@@ -8,18 +8,24 @@
 #include <CZ/Core/CZCore.h>
 #include <CZ/Core/CZKeymap.h>
 #include <CZ/Core/CZTime.h>
+#include <CZ/Core/CZEase.h>
 #include <CZ/Core/Events/CZPointerButtonEvent.h>
 #include <CZ/Core/Events/CZPointerMoveEvent.h>
 #include <CZ/Core/Events/CZKeyboardKeyEvent.h>
 #include <CZ/Ream/RImage.h>
 #include <linux/input-event-codes.h>
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
 
-Background::Background(MScreen &screen) noexcept : MLayerSurface()
+Background::Background(MScreen &screen) noexcept :
+    MLayerSurface(),
+    m_gather(DESK_DRAG_GATHER_MS,
+        [this](CZAnimation *a){ gatherStep(a->value()); },
+        [this](CZAnimation *){ gatherFinished(); })
 {
     screen.userData = this;
     setScreen(&screen);
@@ -175,22 +181,30 @@ void Background::updateGrid() noexcept
     m_cell = DeskItem::CellSize(m_iconSize);
     const Int32 stepX { m_cell.width() + DESK_GRID_SPACING };
     const Int32 stepY { m_cell.height() + DESK_GRID_SPACING };
-    m_cols = std::max(1, (m_size.width() - DESK_MARGIN_LEFT - DESK_MARGIN_RIGHT + DESK_GRID_SPACING) / stepX);
-    m_rows = std::max(1, (m_size.height() - DESK_MARGIN_TOP - DESK_MARGIN_BOTTOM + DESK_GRID_SPACING) / stepY);
+
+    // The icon is centered in its (wider) cell: the visible gap to the right edge is the cell's
+    // margin plus that inset. Make it equal to the gap below the top bar.
+    const Int32 box { m_iconSize + 2 * DESK_ICON_PADDING };
+    const Int32 inset { (m_cell.width() - box) / 2 };
+    m_marginRight = std::max(0, DESK_EDGE_GAP - inset);
+    m_marginTop = GetDesk()->topbarHeight() + DESK_EDGE_GAP;
+
+    m_cols = std::max(1, (m_size.width() - DESK_MARGIN_LEFT - m_marginRight + DESK_GRID_SPACING) / stepX);
+    m_rows = std::max(1, (m_size.height() - m_marginTop - DESK_MARGIN_BOTTOM + DESK_GRID_SPACING) / stepY);
 }
 
 SkIPoint Background::cellOrigin(const SkIPoint &cell) const noexcept
 {
     // Columns count from the right edge, like Finder.
     return {
-        m_size.width() - DESK_MARGIN_RIGHT - m_cell.width() - cell.x() * (m_cell.width() + DESK_GRID_SPACING),
-        DESK_MARGIN_TOP + cell.y() * (m_cell.height() + DESK_GRID_SPACING) };
+        m_size.width() - m_marginRight - m_cell.width() - cell.x() * (m_cell.width() + DESK_GRID_SPACING),
+        m_marginTop + cell.y() * (m_cell.height() + DESK_GRID_SPACING) };
 }
 
 SkIPoint Background::cellAt(const SkPoint &topLeft) const noexcept
 {
-    const float col { (m_size.width() - DESK_MARGIN_RIGHT - m_cell.width() - topLeft.x()) / float(m_cell.width() + DESK_GRID_SPACING) };
-    const float row { (topLeft.y() - DESK_MARGIN_TOP) / float(m_cell.height() + DESK_GRID_SPACING) };
+    const float col { (m_size.width() - m_marginRight - m_cell.width() - topLeft.x()) / float(m_cell.width() + DESK_GRID_SPACING) };
+    const float row { (topLeft.y() - m_marginTop) / float(m_cell.height() + DESK_GRID_SPACING) };
     return { std::clamp(Int32(std::lround(col)), 0, m_cols - 1), std::clamp(Int32(std::lround(row)), 0, m_rows - 1) };
 }
 
@@ -216,7 +230,10 @@ void Background::layoutItems() noexcept
 
     updateGrid();
 
-    const auto &positions { GetDesk()->settings.positions };
+    // Arranged orders (Name, Kind, Size) ignore the cells chosen by the user.
+    static const std::map<std::string, SkIPoint> none;
+    const Settings &settings { GetDesk()->settings };
+    const auto &positions { settings.sortBy == Settings::SortBy::Custom ? settings.positions : none };
     std::vector<bool> taken(size_t(m_cols * m_rows), false);
     std::vector<DeskItem*> unplaced;
 
@@ -394,6 +411,9 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
 {
     MLayerSurface::pointerButtonEvent(e);
 
+    if (e.pressed)
+        GetDesk()->setActiveBackground(this);
+
     const SkPoint pos { AKApp::Get()->pointer().pos() };
 
     if (e.button == BTN_RIGHT && e.pressed)
@@ -515,6 +535,9 @@ void Background::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
 {
     MLayerSurface::keyboardKeyEvent(e);
 
+    if (e.isPressed)
+        GetDesk()->setActiveBackground(this);
+
     if (!e.isPressed || !m_showsIcons)
         return;
 
@@ -548,11 +571,6 @@ void Background::startDrag(DeskItem &grabbed) noexcept
     if (!m_dnd)
     {
         m_dnd = std::make_unique<MDND>();
-        m_dndIcon = std::make_unique<AKImageFrame>(m_dnd.get());
-        m_dndIcon->setSizeMode(AKImageFrame::SizeMode::Contain);
-        m_dndIcon->layout().setWidthPercent(100.f);
-        m_dndIcon->layout().setHeightPercent(100.f);
-        m_dndIcon->setOpacity(0.8f);
         m_dnd->onFinished.subscribe(this, [this]{ endDrag(); });
         m_dnd->onCancelled.subscribe(this, [this]{ endDrag(); });
 
@@ -598,17 +616,72 @@ void Background::startDrag(DeskItem &grabbed) noexcept
 
     m_dragGrabKey = grabbed.key();
 
-    // The icon under the pointer exactly where it was grabbed.
-    const SkIRect iconRect { iconRectAt(grabbed.cell) };
+    // Like Finder: the icon and its highlighted name (not the gray box behind the icon), under the
+    // pointer exactly where the item was grabbed.
     const SkIPoint origin { cellOrigin(grabbed.cell) };
     m_dragOffset = { m_pressPos.x() - origin.x(), m_pressPos.y() - origin.y() };
 
-    m_dndIcon->setImage(grabbed.icon.image());
-    m_dnd->layout().setWidth(iconRect.width());
-    m_dnd->layout().setHeight(iconRect.height());
-    m_dnd->setHotspot(SkIPoint::Make(
-        std::clamp(Int32(m_pressPos.x()) - iconRect.x(), 0, iconRect.width()),
-        std::clamp(Int32(m_pressPos.y()) - iconRect.y(), 0, iconRect.height())));
+    m_dndItem.reset();
+    m_dndStack.reset();
+    m_gather.pause();
+    m_flyers.clear();
+
+    if (m_dragKeys.size() == 1)
+    {
+        m_dndItem = std::make_unique<DeskItem>(grabbed.entry(), m_iconSize, m_dnd.get());
+        m_dndItem->layout().setPosition(YGEdgeLeft, 0.f);
+        m_dndItem->layout().setPosition(YGEdgeTop, 0.f);
+        m_dndItem->label.setSelected(true); // Only the label: setSelected() would also show the gray box
+        m_dndItem->icon.setOpacity(0.85f);
+        m_dndItem->label.setOpacity(0.85f);
+
+        m_dnd->layout().setWidth(m_cell.width());
+        m_dnd->layout().setHeight(m_cell.height());
+        m_dnd->setHotspot(SkIPoint::Make(
+            std::clamp(Int32(m_dragOffset.x()), 0, m_cell.width()),
+            std::clamp(Int32(m_dragOffset.y()), 0, m_cell.height())));
+    }
+    else
+    {
+        // Several: the drag starts with the grabbed icon alone while copies of the others fly to the
+        // pointer (gatherStep()); then it becomes the whole stack with a count (gatherFinished()).
+        const SkIRect iconRect { iconRectAt(grabbed.cell) };
+        m_grabInIcon = {
+            std::clamp(Int32(m_pressPos.x()) - iconRect.x() - DESK_ICON_PADDING, 0, m_iconSize),
+            std::clamp(Int32(m_pressPos.y()) - iconRect.y() - DESK_ICON_PADDING, 0, m_iconSize) };
+
+        m_dragImages.clear();
+
+        for (const auto &key : m_dragKeys)
+        {
+            DeskItem *i { item(key) };
+
+            if (!i || i == &grabbed)
+                continue;
+
+            m_dragImages.emplace_back(i->icon.image());
+
+            const SkIRect rect { iconRectAt(i->cell) };
+            // Its layer once stacked: the others are back to front in m_dragImages order, the
+            // grabbed one (not flying, it's the drag icon) in front.
+            const Int32 depth { DragStack::LayerDepth(m_dragImages.size() - 1, m_dragKeys.size()) };
+            auto flyer { std::make_unique<Flyer>(this, SkPoint::Make(rect.x() + DESK_ICON_PADDING, rect.y() + DESK_ICON_PADDING), depth) };
+            flyer->view.setImage(i->icon.image());
+            flyer->view.layout().setWidth(m_iconSize);
+            flyer->view.layout().setHeight(m_iconSize);
+            flyer->box.layout().setPositionType(YGPositionTypeAbsolute);
+            flyer->box.layout().setWidth(m_iconSize);
+            flyer->box.layout().setHeight(m_iconSize);
+            flyer->box.layout().setPosition(YGEdgeLeft, flyer->from.x());
+            flyer->box.layout().setPosition(YGEdgeTop, flyer->from.y());
+            m_flyers.emplace_back(std::move(flyer));
+        }
+
+        m_dragImages.emplace_back(grabbed.icon.image()); // In front
+        m_dndStack = std::make_unique<DragStack>(m_iconSize, m_dnd.get());
+        setDragImage({ grabbed.icon.image() }, 1);
+        m_dndPointer = m_pressPos;
+    }
 
     if (!m_dnd->start(*this, *m_press, { DESK_ITEMS_MIME_TYPE, "text/uri-list" },
                       CZBitset<MDNDOffer::Action>(MDNDOffer::Copy | MDNDOffer::Move)))
@@ -620,14 +693,59 @@ void Background::startDrag(DeskItem &grabbed) noexcept
     for (const auto &key : m_dragKeys)
         if (DeskItem *i { item(key) })
             i->setDimmed(true);
+
+    GetDesk()->setDragSource(this);
+
+    if (!m_flyers.empty())
+        m_gather.reset();
+}
+
+void Background::setDragImage(const std::vector<std::shared_ptr<RImage>> &images, UInt32 count) noexcept
+{
+    if (!m_dnd || !m_dndStack)
+        return;
+
+    m_dndStack->setItems(images, count);
+    const SkISize size { m_dndStack->nodeSize() };
+    const SkIPoint front { m_dndStack->frontOrigin() };
+    m_dnd->layout().setWidth(size.width());
+    m_dnd->layout().setHeight(size.height());
+    m_dnd->setHotspot(SkIPoint::Make(front.x() + m_grabInIcon.x(), front.y() + m_grabInIcon.y()));
+}
+
+void Background::gatherStep(Float64 progress) noexcept
+{
+    // Each one towards its layer of the stack that will be dragged: the front icon is under the
+    // pointer where it was grabbed, the ones behind move right and up by a step per layer.
+    const SkPoint front { m_dndPointer.x() - m_grabInIcon.x(), m_dndPointer.y() - m_grabInIcon.y() };
+    const Int32 step { DragStack::LayerStep(m_iconSize) };
+    const SkScalar t { SkScalar(CZEase::OutCubic(progress)) };
+
+    for (auto &flyer : m_flyers)
+    {
+        const SkPoint target { front.x() + flyer->depth * step, front.y() - flyer->depth * step };
+        flyer->box.layout().setPosition(YGEdgeLeft, flyer->from.x() + (target.x() - flyer->from.x()) * t);
+        flyer->box.layout().setPosition(YGEdgeTop, flyer->from.y() + (target.y() - flyer->from.y()) * t);
+    }
+}
+
+void Background::gatherFinished() noexcept
+{
+    m_flyers.clear();
+
+    if (m_dnd && m_dnd->dragging() && m_dndStack)
+        setDragImage(m_dragImages, UInt32(m_dragKeys.size()));
 }
 
 void Background::dragOver(MDNDOffer &offer, const SkPoint &pos) noexcept
 {
-    CZ_UNUSED(pos)
+    Background *source { GetDesk()->dragSource() };
 
-    // Only our own icons can be dropped here (moving them).
-    if (!m_showsIcons || m_dragKeys.empty() || !offer.hasMimeType(DESK_ITEMS_MIME_TYPE))
+    if (source == this)
+        m_dndPointer = pos; // The flying icons follow it (see gatherStep())
+
+    // Only Desk's own icons can be dropped here (moving them, from this screen or another one).
+    if (!m_showsIcons || !source || source->m_dragKeys.empty() || !offer.hasMimeType(DESK_ITEMS_MIME_TYPE))
     {
         offer.accept("");
         return;
@@ -639,20 +757,35 @@ void Background::dragOver(MDNDOffer &offer, const SkPoint &pos) noexcept
 
 void Background::dropped(MDNDOffer &offer, const SkPoint &pos) noexcept
 {
-    if (!m_showsIcons || m_dragKeys.empty() || !offer.hasMimeType(DESK_ITEMS_MIME_TYPE))
+    Background *source { GetDesk()->dragSource() };
+
+    if (!m_showsIcons || !source || source->m_dragKeys.empty() || !offer.hasMimeType(DESK_ITEMS_MIME_TYPE))
         return;
 
-    DeskItem *grabbed { item(m_dragGrabKey) };
+    // Every screen shows the same icons: the dragged ones are here too, in this screen's cells.
+    const std::vector<std::string> dragKeys { source->m_dragKeys };
+    const SkPoint dragOffset { source->m_dragOffset };
+    DeskItem *grabbed { item(source->m_dragGrabKey) };
 
     if (grabbed)
     {
+        // Moving an icon while arranged switches to Custom, starting from the current layout.
+        if (GetDesk()->settings.sortBy != Settings::SortBy::Custom)
+        {
+            for (auto &i : m_items)
+                GetDesk()->setPosition(i->key(), &i->cell);
+
+            GetDesk()->settings.sortBy = Settings::SortBy::Custom;
+            GetDesk()->selectionChanged(); // Refresh the menus' checks
+        }
+
         // Move every dragged item by the same number of cells as the grabbed one.
-        const SkIPoint target { cellAt({ pos.x() - m_dragOffset.x(), pos.y() - m_dragOffset.y() }) };
+        const SkIPoint target { cellAt({ pos.x() - dragOffset.x(), pos.y() - dragOffset.y() }) };
         const SkIPoint delta { target.x() - grabbed->cell.x(), target.y() - grabbed->cell.y() };
         auto *desk { GetDesk() };
         std::vector<SkIPoint> newCells;
 
-        for (const auto &key : m_dragKeys)
+        for (const auto &key : dragKeys)
             if (DeskItem *i { item(key) })
             {
                 const SkIPoint cell { std::clamp(i->cell.x() + delta.x(), 0, m_cols - 1),
@@ -663,12 +796,12 @@ void Background::dropped(MDNDOffer &offer, const SkPoint &pos) noexcept
 
         // Items in the way flow to the next free cells.
         for (auto &i : m_items)
-            if (std::find(m_dragKeys.begin(), m_dragKeys.end(), i->key()) == m_dragKeys.end() &&
+            if (std::find(dragKeys.begin(), dragKeys.end(), i->key()) == dragKeys.end() &&
                 std::find(newCells.begin(), newCells.end(), i->cell) != newCells.end())
                 desk->setPosition(i->key(), nullptr);
 
         desk->saveSettings();
-        layoutItems();
+        desk->onIconsChanged.notify(); // Positions are shared: every screen re-lays out
     }
 
     // Complete the session (the data itself isn't needed).
@@ -680,6 +813,12 @@ void Background::dropped(MDNDOffer &offer, const SkPoint &pos) noexcept
 
 void Background::endDrag() noexcept
 {
+    if (GetDesk()->dragSource() == this)
+        GetDesk()->setDragSource(nullptr);
+
+    m_gather.pause();
+    m_flyers.clear();
+
     for (const auto &key : m_dragKeys)
         if (DeskItem *i { item(key) })
             i->setDimmed(false);
@@ -783,7 +922,23 @@ void Background::openDesktopMenu(const CZPointerButtonEvent &event) noexcept
         if (m_showsIcons)
         {
             menu.addDivider();
-            menu.addAction("Clean Up", []{ GetDesk()->clearPositions(); }, !s.positions.empty());
+
+            const auto sortAction = [&menu, &s](const char *text, Settings::SortBy sortBy) {
+                menu.addAction(text, [sortBy]{ GetDesk()->setSortBy(sortBy); }).setChecked(s.sortBy == sortBy);
+            };
+
+            sortAction("Sort by Name", Settings::SortBy::Name);
+            sortAction("Sort by Kind", Settings::SortBy::Kind);
+            sortAction("Sort by Size", Settings::SortBy::Size);
+            sortAction("Custom Order", Settings::SortBy::Custom);
+            menu.addDivider();
+            menu.addAction("Larger Icons", []{ GetDesk()->setIconSize(GetDesk()->largerIconSize()); },
+                           s.iconSize < DESK_ICON_SIZE_MAX);
+            menu.addAction("Smaller Icons", []{ GetDesk()->setIconSize(GetDesk()->smallerIconSize()); },
+                           s.iconSize > DESK_ICON_SIZE_MIN);
+            menu.addDivider();
+            menu.addAction("Clean Up", []{ GetDesk()->clearPositions(); },
+                           s.sortBy == Settings::SortBy::Custom && !s.positions.empty());
             menu.addAction("Open Desktop Folder", []{ GetDesk()->openFolder(GetDesk()->desktopDir()); });
         }
     });

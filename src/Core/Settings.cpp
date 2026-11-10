@@ -118,6 +118,9 @@ void Settings::load() noexcept
     if (auto v { value("Icons", "Size") })
         iconSize = std::clamp(std::atoi(v->c_str()), DESK_ICON_SIZE_MIN, DESK_ICON_SIZE_MAX);
 
+    if (auto v { value("Icons", "SortBy") })
+        sortBy = *v == "Name" ? SortBy::Name : *v == "Kind" ? SortBy::Kind : *v == "Size" ? SortBy::Size : SortBy::Custom;
+
     if (auto g { ini->find("Positions") }; g != ini->end())
     {
         for (const auto &[key, cell] : g->second)
@@ -155,7 +158,8 @@ void Settings::save() noexcept
         out << "UsePicture=" << (usePicture ? "true" : "false") << '\n';
         out << "Fit=" << (fit == Fit::Contain ? "Contain" : fit == Fit::Fill ? "Fill" : "Cover") << '\n';
         out << "Color=" << hex << "\n\n";
-        out << "[Icons]\nSize=" << iconSize << "\n\n";
+        out << "[Icons]\nSize=" << iconSize << '\n';
+        out << "SortBy=" << (sortBy == SortBy::Name ? "Name" : sortBy == SortBy::Kind ? "Kind" : sortBy == SortBy::Size ? "Size" : "Custom") << "\n\n";
         out << "[Positions]\n";
 
         for (const auto &[key, cell] : positions)

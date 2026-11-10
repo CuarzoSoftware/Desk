@@ -21,15 +21,19 @@ constexpr SkColor DESK_DEFAULT_COLOR    { 0xFF1F4E79 }; // Solid color used when
 constexpr Int32 DESK_ICON_SIZE_DEFAULT  { 64 };  // Finder's default desktop icon size
 constexpr Int32 DESK_ICON_SIZE_MIN      { 16 };
 constexpr Int32 DESK_ICON_SIZE_MAX      { 128 };
-constexpr Int32 DESK_ICON_SIZE_STEP     { 16 };  // View > Larger/Smaller Icons
+// View > Icon Size / Larger / Smaller Icons
+constexpr Int32 DESK_ICON_SIZES[]       { 16, 24, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128 };
 constexpr Int32 DESK_ICON_PADDING       { 4 };   // Around the icon, inside its selection highlight
-constexpr Int32 DESK_LABEL_FONT_SIZE    { 12 };
+constexpr Int32 DESK_LABEL_FONT_SIZE    { 13 };
 constexpr Int32 DESK_LABEL_LINES        { 2 };
 constexpr Int32 DESK_LABEL_PADDING_X    { 4 };   // Inside the label's selection highlight
 constexpr Int32 DESK_LABEL_GAP          { 3 };   // Between the icon and its label
 constexpr Int32 DESK_GRID_SPACING       { 16 };  // Extra space between cells (both axes)
-constexpr Int32 DESK_MARGIN_TOP         { 48 };  // Below the top bar
-constexpr Int32 DESK_MARGIN_RIGHT       { 32 };
+constexpr Int32 DESK_EDGE_GAP           { 24 };  // Visible gap between the icons and the top bar / right edge
+
+// Firmament's top bar (Desk covers the whole screen, under it): 24 pt times the size chosen in its
+// size menu (read from Firmament's settings, see Desk::topbarHeight()).
+constexpr Int32 DESK_TOPBAR_HEIGHT      { 24 };
 constexpr Int32 DESK_MARGIN_BOTTOM      { 104 };  // Clear of the dock
 constexpr Int32 DESK_MARGIN_LEFT        { 32 };
 
@@ -42,6 +46,9 @@ constexpr SkScalar DESK_ICON_SHADOW_RADIUS { 15.f };
 constexpr Int32   DESK_ICON_SHADOW_OFFSET_Y { 2 };
 constexpr SkColor DESK_LABEL_COLOR      { 0xFFFFFFFF };
 constexpr SkColor DESK_LABEL_SHADOW     { 0xCC000000 };
+constexpr SkColor DESK_DRAG_BADGE_COLOR { 0xFFFF3B30 }; // Count badge while dragging several items
+constexpr size_t  DESK_DRAG_STACK_MAX   { 5 };          // Icons shown stacked while dragging several
+constexpr UInt32  DESK_DRAG_GATHER_MS   { 300 };        // Icons flying to the pointer
 constexpr SkColor DESK_RUBBER_FILL      { 0x33FFFFFF }; // Rubber band selection
 constexpr SkColor DESK_RUBBER_BORDER    { 0x99FFFFFF };
 

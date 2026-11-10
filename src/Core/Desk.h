@@ -5,10 +5,12 @@
 #include <Core/Assets.h>
 #include <Core/Settings.h>
 #include <CZ/Marco/MApp.h>
+#include <CZ/Marco/Roles/MLayerSurface.h>
 #include <CZ/XDG/XDGKit.h>
 #include <CZ/Core/CZObject.h>
 #include <CZ/Core/CZSignal.h>
 #include <CZ/Core/CZTimer.h>
+#include <CZ/Core/CZWeak.h>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -37,6 +39,9 @@ struct DeskEntry
     bool internal { false };     ///< The system disk (mounted at /): can't be ejected
     bool usb { false };          ///< Connected through USB
 
+    UInt64 size { 0 };           ///< Bytes (regular files)
+    std::string kindName;        ///< e.g. "PNG image" (sorting by kind)
+
     /// Launchers (.desktop files of type Application): shown with their own name and icon.
     std::shared_ptr<const XDGDesktopEntry> launcher;
 };
@@ -45,8 +50,8 @@ struct DeskEntry
  * @brief The Desk app: owns the Marco app, the shared assets, the desktop model (mounted disks and
  *        the desktop folder's files) and one Background per screen.
  *
- * Every screen gets the background (picture or solid color). The icons are only shown on the
- * primary screen (the one at 0,0), like on macOS.
+ * Every screen gets the background (picture or solid color) and the icons. Each screen has its own
+ * selection; the menu bar acts on the one used last (see iconsBackground()).
  */
 class Desk final : public CZObject
 {
@@ -66,21 +71,38 @@ public:
     /// The desktop folder (XDG_DESKTOP_DIR, ~/Desktop by default).
     const std::filesystem::path &desktopDir() const noexcept { return m_desktopDir; }
 
-    /// The screen the icons are shown on.
-    MScreen *iconsScreen() const noexcept;
-
-    /// The desktop of iconsScreen() (the one with the icons and the selection).
+    /**
+     * @brief The desktop the menu bar and the keyboard act on: the one used last (clicked, typed in
+     *        or dragged from), else the primary screen's (the one at 0,0).
+     */
     Background *iconsBackground() const noexcept;
+
+    /// Makes @p background the one used last (the selection on the others is cleared).
+    void setActiveBackground(Background *background) noexcept;
+
+    /// The desktop an icon drag started from (nullptr when not dragging).
+    Background *dragSource() const noexcept;
+    void setDragSource(Background *background) noexcept;
 
     /// An XDG user directory (user-dirs.dirs key without the XDG_/_DIR, e.g. "DOCUMENTS"), or
     /// ~/@p fallback.
     std::filesystem::path userDir(const std::string &key, const std::string &fallback) const noexcept;
+
+    /// Height of Firmament's top bar (its size setting is followed live).
+    Int32 topbarHeight() const noexcept;
 
     /// Opens a folder in the file manager.
     void openFolder(const std::filesystem::path &path) noexcept;
 
     /// Desktop icon size (clamped, saved).
     void setIconSize(Int32 size) noexcept;
+
+    /// The next / previous size in DESK_ICON_SIZES.
+    Int32 largerIconSize() const noexcept;
+    Int32 smallerIconSize() const noexcept;
+
+    /// Icon order (saved). Arranged orders ignore the custom positions (kept for Custom).
+    void setSortBy(Settings::SortBy sortBy) noexcept;
 
     /// The selection changed: refreshes the menus (coalesced).
     void selectionChanged() noexcept;
@@ -134,7 +156,8 @@ public:
 private:
     void onScreenPlugged(MScreen &screen) noexcept;
     void onScreenUnplugged(MScreen &screen) noexcept;
-    void updateIconsScreen() noexcept;
+    // Backgrounds, held through their base class (Background needs this header).
+    CZWeak<MLayerSurface> m_activeBackground, m_dragSource;
 
     void initBus() noexcept;
     void initDesktopDir() noexcept;
@@ -144,6 +167,10 @@ private:
     std::vector<DeskEntry> scanVolumes() noexcept;
     std::vector<DeskEntry> scanFiles() noexcept;
     void settingsFileChanged() noexcept;
+    void sortEntries(std::vector<DeskEntry> &entries) const noexcept;
+    void loadTopbarScale() noexcept;
+    float m_topbarScale { 1.f };
+    Int32 m_firmamentWatch { -1 };
 
     std::vector<DeskEntry> m_entries;
     std::filesystem::path m_desktopDir;

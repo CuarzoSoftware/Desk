@@ -72,14 +72,27 @@ MenuBar::MenuBar() noexcept
     /* View */
 
     m_view = addMenu(m_topbar.get(), "View");
+
+    auto sortMenu { addMenu(m_view.get(), "Sort By") };
+
+    for (const auto &[title, sortBy] : { std::pair { "Name", Settings::SortBy::Name }, std::pair { "Kind", Settings::SortBy::Kind },
+                                         std::pair { "Size", Settings::SortBy::Size }, std::pair { "Custom", Settings::SortBy::Custom } })
+        m_sortToggles.emplace_back(addToggle(sortMenu.get(), title, [desk, sortBy]{ desk->setSortBy(sortBy); }), sortBy);
+
     m_cleanUp = addAction(m_view.get(), "Clean Up", "", [desk]{ desk->clearPositions(); });
     addDivider(m_view.get());
-    m_larger = addAction(m_view.get(), "Larger Icons", "⌘+", [desk]{ desk->setIconSize(desk->settings.iconSize + DESK_ICON_SIZE_STEP); });
-    m_shortcuts.push_back({ KEY_EQUAL, false, m_larger, [desk]{ desk->setIconSize(desk->settings.iconSize + DESK_ICON_SIZE_STEP); } });
-    m_shortcuts.push_back({ KEY_KPPLUS, false, m_larger, [desk]{ desk->setIconSize(desk->settings.iconSize + DESK_ICON_SIZE_STEP); } });
-    m_smaller = addAction(m_view.get(), "Smaller Icons", "⌘−", [desk]{ desk->setIconSize(desk->settings.iconSize - DESK_ICON_SIZE_STEP); });
-    m_shortcuts.push_back({ KEY_MINUS, false, m_smaller, [desk]{ desk->setIconSize(desk->settings.iconSize - DESK_ICON_SIZE_STEP); } });
-    m_shortcuts.push_back({ KEY_KPMINUS, false, m_smaller, [desk]{ desk->setIconSize(desk->settings.iconSize - DESK_ICON_SIZE_STEP); } });
+
+    auto sizeMenu { addMenu(m_view.get(), "Icon Size") };
+
+    for (const Int32 size : DESK_ICON_SIZES)
+        m_sizeToggles.emplace_back(addToggle(sizeMenu.get(), std::to_string(size) + " pt", [desk, size]{ desk->setIconSize(size); }), size);
+
+    m_larger = addAction(m_view.get(), "Larger Icons", "⌘+", [desk]{ desk->setIconSize(desk->largerIconSize()); });
+    m_shortcuts.push_back({ KEY_EQUAL, false, m_larger, [desk]{ desk->setIconSize(desk->largerIconSize()); } });
+    m_shortcuts.push_back({ KEY_KPPLUS, false, m_larger, [desk]{ desk->setIconSize(desk->largerIconSize()); } });
+    m_smaller = addAction(m_view.get(), "Smaller Icons", "⌘−", [desk]{ desk->setIconSize(desk->smallerIconSize()); });
+    m_shortcuts.push_back({ KEY_MINUS, false, m_smaller, [desk]{ desk->setIconSize(desk->smallerIconSize()); } });
+    m_shortcuts.push_back({ KEY_KPMINUS, false, m_smaller, [desk]{ desk->setIconSize(desk->smallerIconSize()); } });
     addDivider(m_view.get());
     m_showPicture = addToggle(m_view.get(), "Show Desktop Picture", [desk]{ desk->setUsePicture(!desk->settings.usePicture); });
     m_fill = addToggle(m_view.get(), "Fill Screen", [desk]{ desk->setFit(Settings::Fit::Cover); });
@@ -222,7 +235,13 @@ void MenuBar::update() noexcept
     m_trash->setEnabled(anyFile);
     m_eject->setEnabled(anyEjectable);
     m_setPicture->setEnabled(picture);
-    m_cleanUp->setEnabled(!s.positions.empty());
+    m_cleanUp->setEnabled(s.sortBy == Settings::SortBy::Custom && !s.positions.empty());
+
+    for (auto &[toggle, sortBy] : m_sortToggles)
+        toggle->setChecked(s.sortBy == sortBy);
+
+    for (auto &[toggle, size] : m_sizeToggles)
+        toggle->setChecked(s.iconSize == size);
     m_larger->setEnabled(s.iconSize < DESK_ICON_SIZE_MAX);
     m_smaller->setEnabled(s.iconSize > DESK_ICON_SIZE_MIN);
 

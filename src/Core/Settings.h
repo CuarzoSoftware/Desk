@@ -22,19 +22,24 @@
  *
  * [Icons]
  * Size=64
+ * SortBy=Custom
  *
  * [Positions]
  * Notes.txt=0,2
  * @endcode
  *
  * `Fit` is `Cover` (fills the screen, cropping), `Contain` (whole picture, the color around it) or
- * `Fill` (stretched). Positions are grid cells, columns counted from the right edge. Their keys are
- * percent-encoded item keys (see DeskEntry::key).
+ * `Fill` (stretched). `SortBy` is `Custom` (the positions below), `Name`, `Kind` or `Size`.
+ * Positions are grid cells, columns counted from the right edge. Their keys are percent-encoded
+ * item keys (see DeskEntry::key).
  */
 class Settings
 {
 public:
     enum class Fit { Cover, Contain, Fill };
+
+    /// Icon order: Custom keeps the cells the user chose (positions), the others arrange every icon.
+    enum class SortBy { Custom, Name, Kind, Size };
 
     void load() noexcept;
     void save() noexcept;
@@ -51,6 +56,8 @@ public:
     SkColor color { DESK_DEFAULT_COLOR };
 
     Int32 iconSize { DESK_ICON_SIZE_DEFAULT };
+
+    SortBy sortBy { SortBy::Custom };
 
     /// Grid cell of each item placed by the user (column from the right, row from the top).
     std::map<std::string, SkIPoint> positions;

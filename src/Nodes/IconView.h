@@ -2,28 +2,32 @@
 #define ICONVIEW_H
 
 #include <Core/Types.h>
-#include <CZ/AK/Nodes/AKBakeable.h>
-#include <CZ/AK/Effects/AKBackgroundImageShadowEffect.h>
+#include <CZ/AK/Nodes/AKContainer.h>
+#include <CZ/AK/Nodes/AKImageFrame.h>
 #include <memory>
 
 /**
- * @brief An icon (or thumbnail) scaled to fit the node, with a soft drop shadow following its shape
- *        so it stands out on any background picture.
+ * @brief An icon (or thumbnail) with a soft drop shadow following its shape, so it stands out on
+ *        any background picture.
  *
- * Baked (rather than an AKImageFrame) because the shadow effect is generated from the baked image.
+ * The icon and its shadow are pre-rendered together into one image (Assets::shadowedIcon(), cached
+ * per icon) shown by a plain image frame: no live shadow effect to recompute when repainting. The
+ * frame extends past the node by the shadow's margin (a percentage of the node, so it follows any
+ * size the node is given).
  */
-class IconView final : public AKBakeable
+class IconView final : public AKContainer
 {
 public:
     IconView(AKNode *parent = nullptr) noexcept;
 
     void setImage(std::shared_ptr<RImage> image) noexcept;
+
+    /// The icon itself (without the shadow).
     std::shared_ptr<RImage> image() const noexcept { return m_image; }
 
-    AKBackgroundImageShadowEffect shadow { DESK_ICON_SHADOW_RADIUS, { 0, DESK_ICON_SHADOW_OFFSET_Y }, DESK_ICON_SHADOW_COLOR, this };
+    void setOpacity(SkScalar opacity) noexcept { frame.setOpacity(opacity); }
 
-protected:
-    void bakeEvent(const AKBakeEvent &event) override;
+    AKImageFrame frame { this };
 
 private:
     std::shared_ptr<RImage> m_image;

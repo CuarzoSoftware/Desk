@@ -1,21 +1,11 @@
-#include <LayerShellQt/Shell>
-#include <LayerShellQt/Window>
-#include <QApplication>
+#include <Core/Desk.h>
 
-#include "Desktop.h"
-
-int main(int argc, char **argv)
+int main()
 {
-    qputenv("QT_ASSUME_STDERR_HAS_CONSOLE", "1");
-    LayerShellQt::Shell::useLayerShell();
-    QApplication app(argc, argv);
+    Desk desk;
 
-    QIcon::setThemeName("WhiteSur");
-    QIcon::setFallbackThemeName("Hicolor");
+    if (!desk.marco)
+        return 1;
 
-    app.setStyleSheet(".item-label{text-align:center; font-weight:600; color:white;} .selected{border-radius: 5px; background-color:rgba(3, 111, 252, 0.8);}");
-
-    Desktop desktop;
-    app.exec();
-	return 0;
+    return desk.marco->run();
 }

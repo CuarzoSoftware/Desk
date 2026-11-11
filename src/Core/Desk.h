@@ -125,6 +125,15 @@ public:
     /// Moves files to the trash (XDG trash spec). Volumes are skipped.
     void trash(const std::vector<const DeskEntry*> &entries) noexcept;
 
+    /**
+     * @brief Moves or copies files into the folder @p dir (files dropped on a folder or disk).
+     *
+     * Runs in the background (never overwriting files already there). Like Finder, moving files
+     * from another disk copies them. Files already in @p dir (moving) and @p dir itself or its
+     * parents are skipped.
+     */
+    void transfer(const std::vector<std::filesystem::path> &files, const std::filesystem::path &dir, bool copy) noexcept;
+
     /// Unmounts a volume and powers its drive off.
     void eject(const DeskEntry &volume) noexcept;
 

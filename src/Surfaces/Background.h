@@ -86,6 +86,16 @@ private:
     void dropped(MDNDOffer &offer, const SkPoint &pos) noexcept;
     void endDrag() noexcept;
 
+    /// The folder or disk a drag over @p pos would drop into (nullptr: none, or it can't take it).
+    DeskItem *dropTargetAt(MDNDOffer &offer, const SkPoint &pos) const noexcept;
+    void setDropTarget(DeskItem *item) noexcept;
+    /// Whether the drag carries files from another app (dropped on the desktop or a folder).
+    static bool HasForeignFiles(MDNDOffer &offer) noexcept;
+
+    /// Completes a drop into the folder @p dir (moved, or copied if @p copyByDefault and no action
+    /// was chosen). Returns the dropped files.
+    std::vector<std::filesystem::path> droppedInto(const std::filesystem::path &dir, bool copyByDefault, MDNDOffer &offer) noexcept;
+
     /* Menus */
     void openItemsMenu(const CZPointerButtonEvent &event) noexcept;
     void openDesktopMenu(const CZPointerButtonEvent &event) noexcept;
@@ -143,6 +153,8 @@ private:
     std::vector<std::string> m_dragKeys;
     std::string m_dragGrabKey;
     SkPoint m_dragOffset {}; // Pointer position within the grabbed item's cell
+
+    std::string m_dropTargetKey; // Folder/disk highlighted as the drop target
 
     std::unique_ptr<ContextMenu> m_menu;
 };

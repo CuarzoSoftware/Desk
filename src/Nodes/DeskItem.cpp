@@ -66,7 +66,7 @@ void DeskItem::setSelected(bool selected) noexcept
 
     m_selected = selected;
     GetDesk()->selectionChanged();
-    iconBox.setBackgroundColor(selected ? DESK_ICON_SELECTION : 0x00000000);
+    iconBox.setBackgroundColor(selected || m_dropTarget ? DESK_ICON_SELECTION : 0x00000000);
     label.setSelected(selected);
     updateLabelInput();
 }
@@ -78,9 +78,33 @@ void DeskItem::setDimmed(bool dimmed) noexcept
     label.setOpacity(dimmed ? 0.5f : 1.f);
 }
 
+bool DeskItem::acceptsDrops() const noexcept
+{
+    return m_entry.kind == DeskEntry::Kind::Volume ||
+           (!m_entry.launcher && m_entry.mimeType == "inode/directory");
+}
+
+void DeskItem::setDropTarget(bool target) noexcept
+{
+    if (m_dropTarget == target)
+        return;
+
+    m_dropTarget = target;
+    iconBox.setBackgroundColor(m_selected || target ? DESK_ICON_SELECTION : 0x00000000);
+    updateImage();
+}
+
 void DeskItem::updateImage() noexcept
 {
     auto &assets { GetDesk()->assets };
+
+    // A folder about to receive a drop opens, like in Finder.
+    if (m_dropTarget && m_entry.kind == DeskEntry::Kind::File)
+        if (auto open { assets.openFolderIcon() })
+        {
+            icon.setImage(open);
+            return;
+        }
 
     if (m_entry.kind == DeskEntry::Kind::File && !m_entry.launcher && Assets::HasThumbnail(m_entry.mimeType))
     {

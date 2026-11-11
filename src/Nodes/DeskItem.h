@@ -39,6 +39,13 @@ public:
     /// Dims the item (while it's being dragged).
     void setDimmed(bool dimmed) noexcept;
 
+    /// Whether files can be dropped on it: folders and disks (see Background::dragOver()).
+    bool acceptsDrops() const noexcept;
+
+    /// Something droppable is over it: highlighted, and folders show the open folder icon.
+    void setDropTarget(bool target) noexcept;
+    bool dropTarget() const noexcept { return m_dropTarget; }
+
     /// Reloads the thumbnail if it's for @p path.
     void thumbnailReady(const std::string &path) noexcept;
 
@@ -59,6 +66,7 @@ private:
     DeskEntry m_entry;
     Int32 m_iconSize { DESK_ICON_SIZE_DEFAULT };
     bool m_selected { false };
+    bool m_dropTarget { false };
 };
 
 #endif // DESKITEM_H

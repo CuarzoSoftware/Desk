@@ -122,6 +122,11 @@ std::shared_ptr<RImage> Assets::icon(const DeskEntry &entry) noexcept
     return image;
 }
 
+std::shared_ptr<RImage> Assets::openFolderIcon() noexcept
+{
+    return themedIcon({ "folder-drag-accept", "folder-open" });
+}
+
 /* ---------------------------------------- Pictures ----------------------------------------- */
 
 float Assets::ShadowMargin() noexcept

@@ -30,6 +30,9 @@ public:
     /// The (themed) icon of an entry. Never nullptr unless no generic icon could be loaded either.
     std::shared_ptr<RImage> icon(const DeskEntry &entry) noexcept;
 
+    /// The open folder icon (a folder something is dragged over), nullptr if the theme has none.
+    std::shared_ptr<RImage> openFolderIcon() noexcept;
+
     /**
      * @brief @p icon with its drop shadow, pre-rendered (cached per icon and screen scale).
      *

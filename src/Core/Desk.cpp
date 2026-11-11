@@ -1,3 +1,4 @@
+#include <sys/stat.h>
 #include <Core/Desk.h>
 #include <Core/Log.h>
 #include <Surfaces/Background.h>
@@ -752,6 +753,60 @@ void Desk::trash(const std::vector<const DeskEntry*> &entries) noexcept
     }
 
     scheduleRescan();
+}
+
+void Desk::transfer(const std::vector<std::filesystem::path> &files, const std::filesystem::path &dir, bool copy) noexcept
+{
+    std::error_code ec;
+    const auto target { std::filesystem::weakly_canonical(dir, ec) };
+    struct stat targetStat {};
+
+    if (ec || !std::filesystem::is_directory(target, ec) || stat(target.c_str(), &targetStat) != 0)
+        return;
+
+    // cp/mv: without replacing what's there (-n), into the folder (-t), recursive copies.
+    std::vector<std::string> moves { "mv", "-n", "-t", target.string(), "--" };
+    std::vector<std::string> copies { "cp", "-rn", "-t", target.string(), "--" };
+    const size_t fixed { moves.size() };
+
+    for (const auto &file : files)
+    {
+        // The file itself (a symlink is moved as such, not what it points to), in a real folder.
+        const auto abs { std::filesystem::absolute(file, ec).lexically_normal() };
+
+        if (ec || abs.filename().empty())
+            continue;
+
+        const auto src { std::filesystem::weakly_canonical(abs.parent_path(), ec) / abs.filename() };
+        struct stat srcStat {};
+
+        if (ec || lstat(src.c_str(), &srcStat) != 0)
+            continue;
+
+        // Not into itself (or a folder inside it).
+        const auto rel { target.lexically_relative(src) };
+
+        if (!rel.empty() && *rel.begin() != "..")
+            continue;
+
+        // Like Finder: moving to another disk copies.
+        if (copy || srcStat.st_dev != targetStat.st_dev)
+            copies.emplace_back(src.string());
+        else if (src.parent_path() != target) // Not where it already is
+            moves.emplace_back(src.string());
+    }
+
+    if (moves.size() > fixed)
+    {
+        Log(CZInfo, CZLN, "Moving {} item(s) into {}", moves.size() - fixed, target.string());
+        Spawn(moves);
+    }
+
+    if (copies.size() > fixed)
+    {
+        Log(CZInfo, CZLN, "Copying {} item(s) into {}", copies.size() - fixed, target.string());
+        Spawn(copies);
+    }
 }
 
 void Desk::eject(const DeskEntry &volume) noexcept

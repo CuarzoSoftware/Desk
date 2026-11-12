@@ -49,11 +49,10 @@ std::shared_ptr<RImage> Assets::loadIcon(const std::string &name) noexcept
     if (name.empty() || !xdgkit || m_format.format() == 0)
         return {};
 
-    const SkISize size { DESK_ICON_LOAD_SIZE, DESK_ICON_LOAD_SIZE };
 
     // Absolute paths are allowed in .desktop Icon keys.
     if (name.front() == '/')
-        return RImage::LoadFile(name, m_format, size);
+        return loadFile(name);
 
     const auto *icon { xdgkit->iconThemeManager().findIcon(
         name, DESK_ICON_LOAD_SIZE, 1, XDGIcon::PNG | XDGIcon::SVG, { DESK_ICON_THEME, "" }) };
@@ -64,11 +63,61 @@ std::shared_ptr<RImage> Assets::loadIcon(const std::string &name) noexcept
     std::shared_ptr<RImage> image;
 
     if (icon->extensions() & XDGIcon::SVG)
-        image = RImage::LoadFile(icon->getPath(XDGIcon::SVG), m_format, size);
+        image = loadFile(icon->getPath(XDGIcon::SVG), name);
 
     if (!image && (icon->extensions() & XDGIcon::PNG))
-        image = RImage::LoadFile(icon->getPath(XDGIcon::PNG), m_format, size);
+        image = loadFile(icon->getPath(XDGIcon::PNG), name);
 
+    return image;
+}
+
+std::shared_ptr<RImage> Assets::loadFile(const std::filesystem::path &path, const std::string &iconName) noexcept
+{
+    auto image { RImage::LoadFile(path, m_format, { DESK_ICON_LOAD_SIZE, DESK_ICON_LOAD_SIZE }) };
+
+    if (image)
+    {
+        std::erase_if(m_sources, [](const auto &pair){ return pair.second.image.expired(); });
+        m_sources[image.get()] = { image, iconName, path };
+    }
+
+    return image;
+}
+
+std::shared_ptr<RImage> Assets::sized(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept
+{
+    if (!icon)
+        return {};
+
+    auto src { m_sources.find(icon.get()) };
+
+    if (src == m_sources.end() || src->second.image.expired())
+        return icon;
+
+    const Source &source { src->second };
+    scale = std::max(1, scale);
+    const std::tuple<std::string, Int32, Int32> key { source.iconName.empty() ? source.path.string() : "icon:" + source.iconName, pixels, scale };
+
+    if (auto it { m_sized.find(key) }; it != m_sized.end())
+        return it->second;
+
+    // An SVG is rendered again at that size (the same file: other sizes of a theme may be different
+    // artwork, e.g. padded for panels). A raster themed icon: the theme's file for that size and
+    // scale (only scaled, antialiased, if the theme doesn't have that size).
+    std::filesystem::path path { source.path };
+    auto &xdgkit { GetDesk()->xdgkit };
+
+    if (!source.iconName.empty() && source.path.extension() != ".svg" && xdgkit)
+        if (const auto *found { xdgkit->iconThemeManager().findIcon(source.iconName, std::max(1, (pixels + scale - 1) / scale), scale,
+                                                                    XDGIcon::PNG | XDGIcon::SVG, { DESK_ICON_THEME, "" }) })
+            path = found->getPath((found->extensions() & XDGIcon::SVG) ? XDGIcon::SVG : XDGIcon::PNG);
+
+    auto image { RImage::LoadFile(path, m_format, { pixels, pixels }) };
+
+    if (!image)
+        image = icon;
+
+    m_sized[key] = image;
     return image;
 }
 
@@ -135,34 +184,31 @@ float Assets::ShadowMargin() noexcept
     return float(DESK_ICON_SHADOW_RADIUS) / float(DESK_ICON_SIZE_DEFAULT);
 }
 
-std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon) noexcept
+std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept
 {
     if (!icon)
         return {};
 
-    // The largest screen scale (sharp everywhere).
-    Int32 scale { 1 };
-    for (MScreen *s : GetDesk()->marco->screens())
-        scale = std::max(scale, s->props().scale);
+    pixels = std::max(pixels, 8);
 
-    if (auto it { m_shadowed.find(icon.get()) }; it != m_shadowed.end() && !it->second.icon.expired() && it->second.scale == scale)
+    if (auto it { m_shadowed.find({ icon.get(), pixels, scale }) }; it != m_shadowed.end() && !it->second.icon.expired())
         return it->second.image;
 
     std::erase_if(m_shadowed, [](const auto &pair){ return pair.second.icon.expired(); });
 
-    auto source { icon->skImage() };
-
-    if (!source)
-        return icon;
-
-    // In logical units of the largest icon size (the surface applies the scale).
-    const SkScalar size { SkScalar(DESK_ICON_SIZE_MAX) };
-    const SkScalar margin { std::ceil(size * ShadowMargin()) };
-    const SkScalar ratio { size / SkScalar(DESK_ICON_SIZE_DEFAULT) };
+    // The image covers the icon plus the shadow margin on each side, in pixels (scale 1).
+    const Int32 size { std::max(1, Int32(std::floor(SkScalar(pixels) / (1.f + 2.f * ShadowMargin())))) };
+    const SkScalar margin { (pixels - size) / 2.f };
+    const SkScalar ratio { SkScalar(size) / SkScalar(DESK_ICON_SIZE_DEFAULT) };
     const SkScalar sigma { DESK_ICON_SHADOW_RADIUS * ratio / 3.f };
     const SkScalar dy { DESK_ICON_SHADOW_OFFSET_Y * ratio };
 
-    auto surface { RSurface::Make(SkISize::Make(Int32(size + 2 * margin), Int32(size + 2 * margin)), scale, true) };
+    // Themed icons are loaded again at their exact size (never resampled). Thumbnails (decoded
+    // pictures, at least as large) are resampled once, with a cubic filter.
+    auto sizedIcon { sized(icon, size, scale) };
+    const bool exact { sizedIcon != icon };
+    auto source { sizedIcon->skImage() };
+    auto surface { source ? RSurface::Make(SkISize::Make(pixels, pixels), 1, true) : nullptr };
 
     if (!surface)
         return icon;
@@ -173,19 +219,20 @@ std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon
         c->clear(SK_ColorTRANSPARENT);
 
         // Contained and centered in the icon square (thumbnails keep their aspect ratio).
-        const SkScalar s { std::min(size / source->width(), size / source->height()) };
+        const SkScalar s { std::min(SkScalar(size) / source->width(), SkScalar(size) / source->height()) };
         const SkRect dst { SkRect::MakeXYWH(margin + (size - source->width() * s) / 2.f, margin + (size - source->height() * s) / 2.f,
                                             source->width() * s, source->height() * s) };
 
         SkPaint paint;
         paint.setAntiAlias(true);
         paint.setImageFilter(SkImageFilters::DropShadow(0.f, dy, sigma, sigma, DESK_ICON_SHADOW_COLOR, nullptr));
+        const SkSamplingOptions sampling { exact ? SkSamplingOptions(SkFilterMode::kLinear) : SkSamplingOptions(SkCubicResampler::Mitchell()) };
         c->drawImageRect(source, SkRect::MakeIWH(source->width(), source->height()), dst,
-                         SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear), &paint, SkCanvas::kFast_SrcRectConstraint);
+                         sampling, &paint, SkCanvas::kFast_SrcRectConstraint);
     }
 
     auto image { surface->image() };
-    m_shadowed[icon.get()] = { icon, scale, image };
+    m_shadowed[{ icon.get(), pixels, scale }] = { icon, image };
     return image;
 }
 

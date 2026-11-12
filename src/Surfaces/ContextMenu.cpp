@@ -21,6 +21,12 @@ void ContextMenu::open(MSurface &parent, const SkIPoint &pos, const CZPointerBut
     if (m_items.empty())
         return;
 
+    // Exactly the size of its content (the rows just built), not whatever it had last time: the
+    // popup is configured with this size.
+    const SkISize size { minContentSize() };
+    layout().setWidth(size.width());
+    layout().setHeight(size.height());
+
     // Its top-left corner at the pointer, flipped/slid by the compositor near the screen edges.
     setParent(&parent);
     setAnchorRect(SkIRect::MakeXYWH(pos.x(), pos.y(), 1, 1));

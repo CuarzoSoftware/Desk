@@ -24,5 +24,10 @@ void IconView::setImage(std::shared_ptr<RImage> image) noexcept
         return;
 
     m_image = image;
-    frame.setImage(GetDesk()->assets.shadowedIcon(image));
+
+    // Rendered for the size it's drawn at on each screen (the frame includes the shadow margin).
+    if (image)
+        frame.setImageProvider([image](Int32 pixels, Int32 scale){ return GetDesk()->assets.shadowedIcon(image, pixels, scale); });
+    else
+        frame.setImage(nullptr);
 }

@@ -120,19 +120,32 @@ void ItemLabel::update() noexcept
     showLook();
 }
 
+void ItemLabel::LookFrame::onSceneBegin()
+{
+    label.checkScale(AKNode::scale());
+    AKImageFrame::onSceneBegin();
+}
+
+void ItemLabel::checkScale(Int32 scale) noexcept
+{
+    if (scale <= 0 || scale == m_looksScale)
+        return;
+
+    m_looks[0].reset();
+    m_looks[1].reset();
+    m_looksScale = scale;
+    showLook();
+}
+
 void ItemLabel::showLook() noexcept
 {
-    // Rendered at the largest screen scale (sharp everywhere).
-    Int32 scale { 1 };
-    for (MScreen *s : GetDesk()->marco->screens())
-        scale = std::max(scale, s->props().scale);
+    // At the scale of its screen (see checkScale()). Not known before it's first shown: the largest
+    // screen scale until then.
+    if (m_looksScale <= 0)
+        for (MScreen *s : GetDesk()->marco->screens())
+            m_looksScale = std::max(m_looksScale, s->props().scale);
 
-    if (scale != m_looksScale)
-    {
-        m_looks[0].reset();
-        m_looks[1].reset();
-        m_looksScale = scale;
-    }
+    m_looksScale = std::max(m_looksScale, 1);
 
     auto &look { m_looks[m_selected] };
 

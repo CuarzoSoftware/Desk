@@ -15,8 +15,9 @@
  * Centered, up to DESK_LABEL_LINES lines (ellipsized), white with a soft shadow so it reads over
  * any picture. Selected, each line gets a blue rounded highlight instead of the shadow.
  *
- * Both looks are pre-rendered into images (the selected one the first time it's needed) and kept
- * until the text or width changes: selecting just swaps the image shown, without laying the text
+ * Both looks are pre-rendered into images (the selected one the first time it's needed), at the
+ * scale of the screen it's shown on (never a 2x image scaled down on a 1x screen), and kept
+ * until the text, width or scale changes: selecting just swaps the image shown, without laying the text
  * out or blurring its shadow again (which is costly with many items, e.g. a rubber band selection).
  *
  * Its width is fixed (setWidth()), its height follows the text.
@@ -51,7 +52,20 @@ private:
     /// The highlight rect of each line (node coordinates), including the ellipsis.
     std::vector<SkRect> lineRects() const noexcept;
 
-    AKImageFrame m_frame { this };
+    // Shows the looks; checks the screen's scale right before its image is laid out each frame.
+    class LookFrame final : public AKImageFrame
+    {
+    public:
+        LookFrame(ItemLabel &label) noexcept : AKImageFrame(&label), label(label) {}
+        ItemLabel &label;
+    protected:
+        void onSceneBegin() override;
+    };
+
+    /// Re-renders the looks if the screen's scale (@p scale) isn't the one they're for.
+    void checkScale(Int32 scale) noexcept;
+
+    LookFrame m_frame { *this };
     std::shared_ptr<RImage> m_looks[2];  // Normal, selected
     Int32 m_looksScale { 0 };
     SkScalar m_ellipsisWidth { 0.f };

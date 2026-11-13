@@ -1,4 +1,5 @@
 #include <sys/stat.h>
+#include <CZ/Core/Utils/CZProcess.h>
 #include <Core/Desk.h>
 #include <Core/Log.h>
 #include <Surfaces/Background.h>
@@ -668,30 +669,8 @@ const DeskEntry *Desk::entry(const std::string &key) const noexcept
 
 bool Desk::Spawn(const std::vector<std::string> &args) noexcept
 {
-    if (args.empty())
-        return false;
-
-    std::vector<char*> argv;
-    for (const auto &a : args) argv.push_back(const_cast<char*>(a.c_str()));
-    argv.push_back(nullptr);
-
-    const pid_t child { fork() };
-
-    if (child < 0)
-        return false;
-
-    if (child == 0)
-    {
-        // Double fork so the process is reparented to init and never becomes our zombie.
-        setsid();
-        if (fork() != 0) _exit(0);
-        syscall(SYS_close_range, 3, ~0U, 0);
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-
-    waitpid(child, nullptr, 0);
-    return true;
+    // Detached, started from a background thread: never blocks the UI
+    return CZProcess::SpawnDetached(args);
 }
 
 std::vector<std::shared_ptr<const XDGDesktopEntry>> Desk::appsFor(const DeskEntry &entry) noexcept

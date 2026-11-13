@@ -140,6 +140,14 @@ public:
     /// Creates "untitled folder" (or "untitled folder N") in the desktop folder. Returns its key.
     std::string newFolder() noexcept;
 
+    /**
+     * @brief Renames a file or folder of the desktop (keeping its place in the grid).
+     *
+     * Fails (logged) for volumes, invalid names (empty, ".", "..", with "/") and names already
+     * taken. Returns its new key, or an empty string on failure.
+     */
+    std::string rename(const DeskEntry &entry, const std::string &name) noexcept;
+
     /// Shows @p picture as the background (saved).
     void setPicture(const std::filesystem::path &picture) noexcept;
     void setUsePicture(bool use) noexcept;

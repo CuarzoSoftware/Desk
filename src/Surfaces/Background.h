@@ -5,6 +5,7 @@
 #include <Nodes/DeskItem.h>
 #include <Nodes/SelectionBox.h>
 #include <Nodes/DragStack.h>
+#include <Nodes/RenameField.h>
 #include <Surfaces/ContextMenu.h>
 #include <CZ/Marco/Roles/MLayerSurface.h>
 #include <CZ/Marco/Roles/MDND.h>
@@ -12,6 +13,7 @@
 #include <CZ/AK/Nodes/AKImageFrame.h>
 #include <CZ/Core/CZWeak.h>
 #include <CZ/Core/CZLinearAnimation.h>
+#include <CZ/Core/CZTimer.h>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -52,8 +54,12 @@ public:
     /// Creates a new folder and selects it.
     void newFolder() noexcept;
 
+    /// Edits @p item's name in place (files and folders, see RenameField).
+    void startRename(DeskItem &item) noexcept;
+
     AKImageFrame picture { this };
     AKContainer icons { YGFlexDirectionColumn, false, this };
+    RenameField renameField { this }; // Above every icon
     SelectionBox rubberBand { this };
 
 protected:
@@ -74,6 +80,7 @@ private:
     SkIPoint cellAt(const SkPoint &topLeft) const noexcept;
     SkIRect iconRectAt(const SkIPoint &cell) const noexcept;
     SkRect labelRectAt(const DeskItem &item) const noexcept;
+    SkIRect labelBoxAt(const DeskItem &item) const noexcept; // The label node, as wide as the cell
     DeskItem *itemAt(const SkPoint &pos) const noexcept;
     DeskItem *item(const std::string &key) const noexcept;
 
@@ -120,6 +127,12 @@ private:
     bool m_selectOnRelease { false }; // Click on an already selected item: select only it on release
     UInt64 m_lastClickMs { 0 };
     std::string m_lastClickKey;
+
+    // Slow second click on the label of the only selected item: renamed unless it becomes a double
+    // click (see pointerButtonEvent())
+    std::string m_renameCandidate;
+    std::string m_pressRenameKey;
+    CZTimer m_renameTimer;
 
     bool m_rubberActive { false };
     SkPoint m_rubberStart {};

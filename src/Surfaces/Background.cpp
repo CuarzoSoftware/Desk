@@ -38,6 +38,20 @@ Background::Background(MScreen &screen) noexcept :
     setAnchor(CZEdgeLeft | CZEdgeTop | CZEdgeRight | CZEdgeBottom);
     setExclusiveZone(-1); // The whole screen, under the top bar and the dock
     setKeyboardInteractivity(KeyboardInteractivity::OnDemand);
+    setKeyboardFocusable(true); // Takes the keyboard when clicked (see pointerButtonEvent())
+
+    renameField.onRenamed = [this](const std::string &key) {
+        if (DeskItem *renamed { item(key) })
+            selectOnly(renamed);
+    };
+
+    m_renameTimer.setCallback([this](CZTimer*) {
+        DeskItem *target { item(m_renameCandidate) };
+        m_renameCandidate.clear();
+
+        if (target && target->selected() && selection().size() == 1)
+            startRename(*target);
+    });
     requestAvailableWidth();
     requestAvailableHeight();
 
@@ -220,6 +234,13 @@ SkIRect Background::iconRectAt(const SkIPoint &cell) const noexcept
     return SkIRect::MakeXYWH(origin.x() + (m_cell.width() - box) / 2, origin.y(), box, box);
 }
 
+SkIRect Background::labelBoxAt(const DeskItem &item) const noexcept
+{
+    const SkIPoint origin { cellOrigin(item.cell) };
+    return SkIRect::MakeXYWH(origin.x(), origin.y() + m_iconSize + 2 * DESK_ICON_PADDING + DESK_LABEL_GAP,
+                             m_cell.width(), Int32(item.label.layout().calculatedHeight()));
+}
+
 SkRect Background::labelRectAt(const DeskItem &item) const noexcept
 {
     const SkIPoint origin { cellOrigin(item.cell) };
@@ -289,6 +310,15 @@ void Background::layoutItems() noexcept
         const SkIPoint origin { cellOrigin(item->cell) };
         item->layout().setPosition(YGEdgeLeft, origin.x());
         item->layout().setPosition(YGEdgeTop, origin.y());
+    }
+
+    // The item being renamed may have moved, or be gone
+    if (renameField.active())
+    {
+        if (DeskItem *renamed { item(renameField.key()) })
+            renameField.place(labelBoxAt(*renamed));
+        else
+            renameField.cancel();
     }
 }
 
@@ -383,6 +413,14 @@ void Background::newFolder() noexcept
         selectOnly(created);
 }
 
+void Background::startRename(DeskItem &target) noexcept
+{
+    m_renameTimer.stop();
+    m_renameCandidate.clear();
+    selectOnly(&target);
+    renameField.begin(target, labelBoxAt(target));
+}
+
 void Background::openSelection() noexcept
 {
     GetDesk()->open(selectedEntries());
@@ -421,6 +459,19 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
 
     const SkPoint pos { AKApp::Get()->pointer().pos() };
 
+    // Clicks in the name being edited are its own
+    if (renameField.active() && SkRect::Make(renameField.worldRect()).contains(pos.x(), pos.y()))
+        return;
+
+    if (e.pressed)
+    {
+        m_renameTimer.stop();
+        m_renameCandidate.clear();
+
+        // The desktop's keys (also ends a rename: its editor loses the keyboard)
+        setKeyboardFocus(true);
+    }
+
     if (e.button == BTN_RIGHT && e.pressed)
     {
         if (!m_showsIcons)
@@ -455,6 +506,14 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
         if (m_pressItem && m_selectOnRelease)
             selectOnly(m_pressItem);
 
+        // Not dragged: the slow second click renames, unless a double click follows
+        if (m_pressItem && !m_pressRenameKey.empty() && m_pressItem->key() == m_pressRenameKey)
+        {
+            m_renameCandidate = m_pressRenameKey;
+            m_renameTimer.start(DESK_DOUBLE_CLICK_MS);
+        }
+
+        m_pressRenameKey.clear();
         m_pressItem.reset();
         m_press.reset();
         m_selectOnRelease = false;
@@ -463,6 +522,13 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
 
     DeskItem *item { itemAt(pos) };
     const UInt64 now { CZTime::Ms() };
+
+    // A click on the name of the item that's already the only one selected (see the release)
+    m_pressRenameKey.clear();
+
+    if (item && item->selected() && selection().size() == 1 && !CtrlOrShiftHeld() &&
+        item->labelRect().contains(pos.x(), pos.y()))
+        m_pressRenameKey = item->key();
 
     if (!item)
     {
@@ -487,6 +553,7 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
     if (m_lastClickKey == item->key() && now - m_lastClickMs <= DESK_DOUBLE_CLICK_MS)
     {
         m_lastClickMs = 0;
+        m_pressRenameKey.clear();
         selectOnly(item);
         openSelection();
         return;
@@ -542,6 +609,10 @@ void Background::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
 
     if (e.isPressed)
         GetDesk()->setActiveBackground(this);
+
+    // Typing a name (see RenameField)
+    if (renameField.active())
+        return;
 
     if (!e.isPressed || !m_showsIcons)
         return;
@@ -1127,6 +1198,12 @@ void Background::openItemsMenu(const CZPointerButtonEvent &event) noexcept
         menu.addDivider();
 
         const bool hasFiles { std::any_of(entries.begin(), entries.end(), [](const DeskEntry *e){ return e->kind == DeskEntry::Kind::File; }) };
+
+        if (single && first->kind == DeskEntry::Kind::File && !first->launcher)
+            menu.addAction("Rename", [this, key = first->key]{
+                if (DeskItem *target { item(key) })
+                    startRename(*target);
+            });
 
         if (hasFiles)
             menu.addAction("Move to Trash", [this]{ trashSelection(); });

@@ -816,6 +816,55 @@ std::string Desk::newFolder() noexcept
     return name;
 }
 
+std::string Desk::rename(const DeskEntry &entry, const std::string &name) noexcept
+{
+    if (entry.kind != DeskEntry::Kind::File)
+        return {};
+
+    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos || name.find('\0') != std::string::npos)
+    {
+        Log(CZWarning, CZLN, "Can't rename {}: invalid name \"{}\"", entry.path.string(), name);
+        return {};
+    }
+
+    const fs::path to { entry.path.parent_path() / name };
+
+    if (to == entry.path)
+        return entry.key;
+
+    std::error_code ec;
+
+    // Taken (unless it's the same file, e.g. only the letter case changes on a case-insensitive disk)
+    if (fs::exists(fs::symlink_status(to, ec)) && !fs::equivalent(entry.path, to, ec))
+    {
+        Log(CZWarning, CZLN, "Can't rename {}: \"{}\" already exists", entry.path.string(), name);
+        return {};
+    }
+
+    fs::rename(entry.path, to, ec);
+
+    if (ec)
+    {
+        Log(CZError, CZLN, "Can't rename {} to \"{}\": {}", entry.path.string(), name, ec.message());
+        return {};
+    }
+
+    // Keep its place (keys are file names)
+    const std::string key { to.filename().string() };
+
+    if (auto it { settings.positions.find(entry.key) }; it != settings.positions.end())
+    {
+        const SkIPoint cell { it->second };
+        settings.positions.erase(it);
+        settings.positions[key] = cell;
+        saveSettings();
+    }
+
+    Log(CZInfo, CZLN, "Renamed {} to \"{}\"", entry.path.string(), name);
+    rescan();
+    return key;
+}
+
 /* ---------------------------------------- Settings ---------------------------------------- */
 
 void Desk::setPicture(const fs::path &picture) noexcept

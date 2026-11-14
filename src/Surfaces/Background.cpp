@@ -13,6 +13,8 @@
 #include <CZ/Core/CZKeymap.h>
 #include <CZ/Core/CZTime.h>
 #include <CZ/Core/CZEase.h>
+#include <CZ/Core/CZLinearAnimation.h>
+#include <CZ/AK/Nodes/AKImage.h>
 #include <CZ/Core/Events/CZPointerButtonEvent.h>
 #include <CZ/Core/Events/CZPointerMoveEvent.h>
 #include <CZ/Core/Events/CZKeyboardKeyEvent.h>
@@ -423,7 +425,53 @@ void Background::startRename(DeskItem &target) noexcept
 
 void Background::openSelection() noexcept
 {
+    // A few of them at most (it's only a hint)
+    size_t animated { 0 };
+
+    for (DeskItem *item : selection())
+        if (animated++ < 6)
+            animateOpening(*item);
+
     GetDesk()->open(selectedEntries());
+}
+
+void Background::animateOpening(DeskItem &item) noexcept
+{
+    const auto image { item.icon.image() };
+
+    if (!image)
+        return;
+
+    // A copy of the icon, above everything (from where it is, in this node's coordinates)
+    auto node { std::make_shared<AKImage>(image, this) };
+    const SkRegion empty;
+    node->setInputRegion(&empty);
+    node->layout().setPositionType(YGPositionTypeAbsolute);
+
+    const SkIRect &origin { worldRect() };
+    const SkRect from { SkRect::Make(item.icon.frame.worldRect().makeOffset(-origin.x(), -origin.y())) };
+    const auto step = [node, from](Float64 t)
+    {
+        // Larger in place (around its center), fading out
+        const SkScalar e { SkScalar(CZEase::OutCubic(t)) };
+        const SkScalar s { 1.f + (DESK_OPEN_ZOOM_SCALE - 1.f) * e };
+        const SkScalar cx { from.centerX() }, cy { from.centerY() };
+        const SkScalar w { from.width() * s }, h { from.height() * s };
+        node->layout().setPosition(YGEdgeLeft, cx - w * 0.5f);
+        node->layout().setPosition(YGEdgeTop, cy - h * 0.5f);
+        node->layout().setWidth(w);
+        node->layout().setHeight(h);
+        // Fading out fast: mostly gone early, while still growing ((1 - t)^3)
+        const SkScalar left { 1.f - SkScalar(t) };
+        node->setOpacity(left * left * left);
+    };
+
+    step(0.0);
+
+    // The node goes away with the animation (its callbacks hold it)
+    CZLinearAnimation::OneShot(DESK_OPEN_ZOOM_MS,
+        [step](CZAnimation *a){ step(a->value()); },
+        [node](CZAnimation*){ node->setVisible(false); });
 }
 
 void Background::trashSelection() noexcept
@@ -621,8 +669,22 @@ void Background::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
     {
     case KEY_ENTER:
     case KEY_KPENTER:
-        openSelection();
+    {
+        // Twice (like a double click): a single press does nothing (as in Finder)
+        if (e.isRepeat)
+            break;
+
+        const UInt32 now { CZTime::Ms() };
+
+        if (m_lastReturnMs != 0 && now - m_lastReturnMs <= DESK_DOUBLE_CLICK_MS)
+        {
+            m_lastReturnMs = 0;
+            openSelection();
+        }
+        else
+            m_lastReturnMs = now;
         break;
+    }
     case KEY_DELETE:
         trashSelection();
         break;

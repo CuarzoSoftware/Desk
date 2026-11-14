@@ -48,7 +48,10 @@ public:
     void selectOnly(DeskItem *item) noexcept;
     void clearSelection() noexcept;
     void selectAll() noexcept;
+    /// Opens the selected items, each icon growing in place while fading out (see animateOpening()).
     void openSelection() noexcept;
+    void animateOpening(DeskItem &item) noexcept;
+    UInt32 m_lastReturnMs { 0 }; // Return opens the selection when pressed twice
     void trashSelection() noexcept;
 
     /// Creates a new folder and selects it.

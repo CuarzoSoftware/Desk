@@ -6,6 +6,7 @@
 #include <CZ/Core/CZSignal.h>
 #include <CZ/Core/CZTimer.h>
 #include <CZ/Ream/DRM/RDRMFormat.h>
+#include <CZ/AssetBroker/ABIconKey.h>
 #include <CZ/skia/core/SkSize.h>
 #include <deque>
 #include <map>
@@ -17,7 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace CZ { class RImage; }
+namespace CZ { class RImage; class ABCore; }
 struct DeskEntry;
 
 /**
@@ -47,10 +48,8 @@ public:
     /**
      * @brief @p icon (loaded by this class) again, at @p pixels for a screen with scale @p scale.
      *
-     * SVGs are rendered again at that size. Raster themed icons are looked up again for that size
-     * and scale (scaled, antialiased, only if the theme has no such size). Other files
-     * are loaded again at that size. Cached. Returns @p icon itself if it's not known (e.g.
-     * thumbnails).
+     * Rendered again from the same file at that size (through the AssetBroker: shared with other
+     * apps if the service is running). Returns @p icon itself if it's not known (e.g. thumbnails).
      */
     std::shared_ptr<RImage> sized(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept;
 
@@ -81,15 +80,19 @@ public:
     std::shared_ptr<RImage> picture(const std::filesystem::path &path, SkISize screenSize, Settings::Fit fit) noexcept;
 
 private:
+    /// First themed icon found among @p names (cached, including misses).
     std::shared_ptr<RImage> themedIcon(const std::vector<std::string> &names) noexcept;
-    std::shared_ptr<RImage> loadIcon(const std::string &name) noexcept;
+
+    /// Desk icon lookup (DESK_ICON_THEME first, at DESK_ICON_LOAD_SIZE).
+    static ABIconKey iconKey(std::vector<std::string> names) noexcept;
     void processThumbnailQueue() noexcept;
 
     /// Decodes a raster picture (honoring its EXIF orientation) and scales it to @p sizeFor(source size).
     std::shared_ptr<RImage> decode(const std::filesystem::path &path, const std::function<SkISize(SkISize)> &sizeFor) noexcept;
 
-    RDRMFormat m_format { 0, {} };
-    std::unordered_map<std::string, std::shared_ptr<RImage>> m_icons; // By icon name
+    RDRMFormat m_format { 0, {} }; // Thumbnails and pictures (decoded here)
+    std::shared_ptr<ABCore> m_ab;  // Icons
+    std::unordered_map<std::string, std::shared_ptr<RImage>> m_icons; // By icon names
 
     struct Thumbnail
     {
@@ -119,16 +122,14 @@ private:
 
     std::map<std::tuple<const RImage*, Int32, Int32>, Shadowed> m_shadowed; // By icon, size and scale
 
-    // Where each loaded icon comes from (to load it at other sizes).
-    std::shared_ptr<RImage> loadFile(const std::filesystem::path &path, const std::string &iconName = {}) noexcept;
+    // Where each loaded icon comes from (to load it at other sizes)
     struct Source
     {
         std::weak_ptr<RImage> image;
-        std::string iconName;       ///< Themed icon (looked up again per size and scale)
-        std::filesystem::path path; ///< Otherwise, the file
+        ABIconKey key;
     };
+
     std::unordered_map<const RImage*, Source> m_sources;
-    std::map<std::tuple<std::string, Int32, Int32>, std::shared_ptr<RImage>> m_sized; // By source, size and scale
 };
 
 #endif // ASSETS_H

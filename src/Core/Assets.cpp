@@ -9,6 +9,7 @@
 #include <CZ/Ream/RPass.h>
 #include <CZ/Ream/RSurface.h>
 #include <CZ/XDG/XDGKit.h>
+#include <CZ/AssetBroker/ABCore.h>
 #include <CZ/XDG/XDGDesktopEntry.h>
 #include <CZ/XDG/XDGMimeDatabase.h>
 #include <CZ/skia/codec/SkCodec.h>
@@ -30,6 +31,19 @@ void Assets::init() noexcept
 {
     m_thumbnailTimer = std::make_unique<CZTimer>([this](CZTimer *){ processThumbnailQueue(); });
 
+    // Icons: through the cz-asset-broker service if it's running (shared with other apps as
+    // DMA-bufs, looked up and rasterized once), otherwise loaded here. Local lookups reuse Desk's
+    // XDGKit (also used for MIME types and .desktop entries).
+    m_ab = ABCore::GetOrMake();
+
+    if (m_ab)
+    {
+        m_ab->setXDGKit(GetDesk()->xdgkit);
+        Log(CZInfo, CZLN, "Icons from {}", m_ab->remote() ? "the asset broker service" : "this process");
+    }
+    else
+        Log(CZError, CZLN, "Failed to create the ABCore: icons won't load");
+
     auto ream { RCore::Get() };
     const auto &formats { ream->mainDevice()->textureFormats().formats() };
     auto fmt { formats.find(DRM_FORMAT_ABGR8888) };
@@ -37,104 +51,66 @@ void Assets::init() noexcept
     if (fmt != formats.end())
         m_format = *fmt;
     else
-        Log(CZError, CZLN, "ABGR8888 isn't a texture format of the main device: icons won't load");
+        Log(CZError, CZLN, "ABGR8888 isn't a texture format of the main device: pictures won't load");
 }
 
 /* ------------------------------------------ Icons ------------------------------------------ */
 
-std::shared_ptr<RImage> Assets::loadIcon(const std::string &name) noexcept
+ABIconKey Assets::iconKey(std::vector<std::string> names) noexcept
 {
-    auto &xdgkit { GetDesk()->xdgkit };
-
-    if (name.empty() || !xdgkit || m_format.format() == 0)
-        return {};
-
-
-    // Absolute paths are allowed in .desktop Icon keys.
-    if (name.front() == '/')
-        return loadFile(name);
-
-    const auto *icon { xdgkit->iconThemeManager().findIcon(
-        name, DESK_ICON_LOAD_SIZE, 1, XDGIcon::PNG | XDGIcon::SVG, { DESK_ICON_THEME, "" }) };
-
-    if (!icon)
-        return {};
-
-    std::shared_ptr<RImage> image;
-
-    if (icon->extensions() & XDGIcon::SVG)
-        image = loadFile(icon->getPath(XDGIcon::SVG), name);
-
-    if (!image && (icon->extensions() & XDGIcon::PNG))
-        image = loadFile(icon->getPath(XDGIcon::PNG), name);
-
-    return image;
-}
-
-std::shared_ptr<RImage> Assets::loadFile(const std::filesystem::path &path, const std::string &iconName) noexcept
-{
-    auto image { RImage::LoadFile(path, m_format, { DESK_ICON_LOAD_SIZE, DESK_ICON_LOAD_SIZE }) };
-
-    if (image)
-    {
-        std::erase_if(m_sources, [](const auto &pair){ return pair.second.image.expired(); });
-        m_sources[image.get()] = { image, iconName, path };
-    }
-
-    return image;
+    ABIconKey key;
+    key.names = std::move(names);
+    key.size = DESK_ICON_LOAD_SIZE;
+    key.themes = { DESK_ICON_THEME, "" };
+    return key;
 }
 
 std::shared_ptr<RImage> Assets::sized(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept
 {
-    if (!icon)
-        return {};
+    CZ_UNUSED(scale) // pixels are already physical: the same artwork for every scale
+
+    if (!icon || !m_ab)
+        return icon;
 
     auto src { m_sources.find(icon.get()) };
 
     if (src == m_sources.end() || src->second.image.expired())
         return icon;
 
-    const Source &source { src->second };
-    scale = std::max(1, scale);
-    const std::tuple<std::string, Int32, Int32> key { source.iconName.empty() ? source.path.string() : "icon:" + source.iconName, pixels, scale };
-
-    if (auto it { m_sized.find(key) }; it != m_sized.end())
-        return it->second;
-
-    // An SVG is rendered again at that size (the same file: other sizes of a theme may be different
-    // artwork, e.g. padded for panels). A raster themed icon: the theme's file for that size and
-    // scale (only scaled, antialiased, if the theme doesn't have that size).
-    std::filesystem::path path { source.path };
-    auto &xdgkit { GetDesk()->xdgkit };
-
-    if (!source.iconName.empty() && source.path.extension() != ".svg" && xdgkit)
-        if (const auto *found { xdgkit->iconThemeManager().findIcon(source.iconName, std::max(1, (pixels + scale - 1) / scale), scale,
-                                                                    XDGIcon::PNG | XDGIcon::SVG, { DESK_ICON_THEME, "" }) })
-            path = found->getPath((found->extensions() & XDGIcon::SVG) ? XDGIcon::SVG : XDGIcon::PNG);
-
-    auto image { RImage::LoadFile(path, m_format, { pixels, pixels }) };
-
-    if (!image)
-        image = icon;
-
-    m_sized[key] = image;
-    return image;
+    // Same lookup (so an SVG is rendered again from the same file: other sizes of a theme may be
+    // different artwork, e.g. padded for panels), fitted in the new size. Shared and cached by the
+    // ABCore (and the service).
+    auto image { m_ab->icon(src->second.key, { std::max(1, pixels), std::max(1, pixels) }) };
+    return image ? image : icon;
 }
 
 std::shared_ptr<RImage> Assets::themedIcon(const std::vector<std::string> &names) noexcept
 {
+    std::string cacheKey;
+
     for (const auto &name : names)
+        cacheKey.append(name).push_back('\n');
+
+    if (auto it { m_icons.find(cacheKey) }; it != m_icons.end())
+        return it->second;
+
+    // One lookup with fallbacks (cached, including misses)
+    std::shared_ptr<RImage> image;
+
+    if (m_ab)
     {
-        auto it { m_icons.find(name) };
+        const auto key { iconKey(names) };
+        image = m_ab->icon(key, { DESK_ICON_LOAD_SIZE, DESK_ICON_LOAD_SIZE });
 
-        if (it == m_icons.end())
-            it = m_icons.emplace(name, loadIcon(name)).first;
-
-        if (it->second)
-            return it->second;
+        if (image)
+        {
+            std::erase_if(m_sources, [](const auto &pair){ return pair.second.image.expired(); });
+            m_sources[image.get()] = { image, key };
+        }
     }
 
-    return {};
+    m_icons[cacheKey] = image;
+    return image;
 }
 
 std::shared_ptr<RImage> Assets::icon(const DeskEntry &entry) noexcept

@@ -18,6 +18,10 @@ constexpr SkColor DESK_DEFAULT_COLOR    { 0xFF1F4E79 }; // Solid color used when
 
 // --- Icon grid -------------------------------------------------------------------------------
 
+// Size changes closer than this (e.g. the screen being resized interactively): the current picture
+// is drawn stretched to the new size, and decoded at it once they stop for this long
+constexpr UInt32 DESK_PICTURE_RESIZE_DEBOUNCE_MS { 250 };
+
 constexpr Int32 DESK_ICON_SIZE_DEFAULT  { 64 };  // Finder's default desktop icon size
 constexpr Int32 DESK_ICON_SIZE_MIN      { 16 };
 constexpr Int32 DESK_ICON_SIZE_MAX      { 128 };

@@ -47,6 +47,9 @@ Background::Background(MScreen &screen) noexcept :
             selectOnly(renamed);
     };
 
+    // The size settled: the picture decoded at it (see suggestedSizeChanged())
+    m_pictureResizeTimer.setCallback([this](CZTimer*){ applyBackground(); });
+
     m_renameTimer.setCallback([this](CZTimer*) {
         DeskItem *target { item(m_renameCandidate) };
         m_renameCandidate.clear();
@@ -145,7 +148,22 @@ void Background::suggestedSizeChanged()
         return;
 
     m_size = size;
-    applyBackground(); // The picture is decoded at the screen size
+
+    // The picture is decoded at the screen size, but not while it changes too often (e.g. the
+    // screen being resized interactively): until then the current one is drawn stretched to the
+    // new size (the picture node fills the surface), and the surface committed right away
+    const UInt32 now { CZTime::Ms() };
+    const bool frequent { m_pictureResizeTimer.running() || now - m_lastResizeMs < DESK_PICTURE_RESIZE_DEBOUNCE_MS };
+    m_lastResizeMs = now;
+
+    if (frequent && picture.image())
+        m_pictureResizeTimer.start(DESK_PICTURE_RESIZE_DEBOUNCE_MS); // Restarted: once they stop
+    else
+    {
+        m_pictureResizeTimer.stop();
+        applyBackground();
+    }
+
     layoutItems();
 }
 

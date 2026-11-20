@@ -117,6 +117,10 @@ private:
     SkISize m_size {};
     bool m_showsIcons { false };
 
+    // Frequent size changes: the picture isn't decoded again until they stop (see suggestedSizeChanged())
+    UInt32 m_lastResizeMs { 0 };
+    CZTimer m_pictureResizeTimer;
+
     std::vector<std::unique_ptr<DeskItem>> m_items; // Entry order (auto placement order)
     Int32 m_iconSize { DESK_ICON_SIZE_DEFAULT };
     SkISize m_cell {};

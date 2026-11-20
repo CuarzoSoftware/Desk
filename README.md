@@ -9,6 +9,8 @@
   </a>
 </p>
 
+> This project is part of the [Cuarzo Framework](https://github.com/CuarzoSoftware/Cuarzo). Follow the instructions there to build and install it.
+
 Desktop for Cuarzo OS, built on Marco (Wayland layer shell). It has two jobs:
 
 - **Background:** a picture or a solid color on every screen. The surface sits on the background

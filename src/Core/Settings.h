@@ -44,7 +44,7 @@ public:
     void load() noexcept;
     void save() noexcept;
 
-    /// Picture shown as the background (empty = none).
+    /// Picture shown as the background (empty = none). DefaultPicture() until one is chosen.
     std::filesystem::path picture;
 
     /// Whether the picture is shown (false = solid color only).
@@ -78,6 +78,10 @@ public:
     static bool IsStoredPicture(const std::filesystem::path &path) noexcept;
 
     static std::filesystem::path FilePath() noexcept;
+
+    /// The picture installed with Desk (`<prefix>/share/cz-desk/Assets/Wallpaper.jpg`), shown until
+    /// one is chosen (no `Picture` key, e.g. the first launch). Empty if not installed.
+    static std::filesystem::path DefaultPicture() noexcept;
 };
 
 #endif // SETTINGS_H

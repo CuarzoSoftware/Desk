@@ -9,6 +9,17 @@ project(
     ]
 )
 
+# Images (e.g. the default desktop picture), installed to <prefix>/share/cz-desk/Assets
+ASSETS_INSTALL_DIR = join_paths(get_option('prefix'), get_option('datadir'), 'cz-desk/Assets')
+
+add_project_arguments(
+    '-DCZ_DESK_ASSETS_DIR="@0@"'.format(ASSETS_INSTALL_DIR),
+    language : ['c', 'cpp'])
+
+install_data(
+    'assets/Wallpaper.jpg',
+    install_dir: ASSETS_INSTALL_DIR)
+
 cz_core_dep         = dependency('cz-core', fallback:['cz-core', 'cz_core_dep'])
 cz_skia_dep         = dependency('cz-skia', fallback:['cz-skia', 'cz_skia_dep'], include_type: 'system')
 cz_ream_dep         = dependency('cz-ream', fallback:['cz-ream', 'cz_ream_dep'])

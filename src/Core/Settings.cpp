@@ -78,12 +78,27 @@ static bool ParseColor(const std::string &value, SkColor &out) noexcept
     return true;
 }
 
+fs::path Settings::DefaultPicture() noexcept
+{
+    const fs::path path { fs::path(CZ_DESK_ASSETS_DIR) / "Wallpaper.jpg" };
+    std::error_code ec;
+
+    if (fs::is_regular_file(path, ec))
+        return path;
+
+    Log(CZWarning, CZLN, "No default picture at {} (is Desk installed?)", path.string());
+    return {};
+}
+
 void Settings::load() noexcept
 {
     *this = Settings();
 
     const fs::path path { FilePath() };
     std::error_code ec;
+
+    // Until one is chosen (e.g. the first launch): the picture installed with Desk
+    picture = DefaultPicture();
 
     if (!fs::is_regular_file(path, ec))
     {

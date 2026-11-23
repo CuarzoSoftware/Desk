@@ -45,6 +45,15 @@ Desk::Desk() noexcept
 
     xdgkit = XDGKit::Make();
     settings.load();
+
+    // Set before copies were kept (or by hand in desk.conf): copied now if it still exists
+    if (std::error_code ec; !settings.picture.empty() && !Settings::IsStoredPicture(settings.picture) &&
+        fs::is_regular_file(settings.picture, ec))
+    {
+        settings.picture = Settings::StorePicture(settings.picture);
+        saveSettings();
+    }
+
     loadTopbarScale();
     assets.init();
     initDesktopDir();
@@ -869,7 +878,8 @@ std::string Desk::rename(const DeskEntry &entry, const std::string &name) noexce
 
 void Desk::setPicture(const fs::path &picture) noexcept
 {
-    settings.picture = picture;
+    // A copy, overwriting the previous one: shown even if the original goes away
+    settings.picture = Settings::StorePicture(picture);
     settings.usePicture = true;
     saveSettings();
     onBackgroundChanged.notify();

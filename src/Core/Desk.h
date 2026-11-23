@@ -148,7 +148,7 @@ public:
      */
     std::string rename(const DeskEntry &entry, const std::string &name) noexcept;
 
-    /// Shows @p picture as the background (saved).
+    /// Shows @p picture as the background (saved, as a copy: see Settings::StorePicture()).
     void setPicture(const std::filesystem::path &picture) noexcept;
     void setUsePicture(bool use) noexcept;
     void setFit(Settings::Fit fit) noexcept;

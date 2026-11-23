@@ -171,3 +171,51 @@ void Settings::save() noexcept
     if (ec)
         Log(CZError, CZLN, "Failed to save the settings file {}: {}", path.string(), ec.message());
 }
+
+static constexpr const char *StoredPictureStem { "wallpaper" };
+
+bool Settings::IsStoredPicture(const fs::path &path) noexcept
+{
+    return !path.empty() && path.parent_path() == FilePath().parent_path() && path.stem() == StoredPictureStem;
+}
+
+fs::path Settings::StorePicture(const fs::path &source) noexcept
+{
+    if (source.empty() || IsStoredPicture(source))
+        return source;
+
+    const fs::path dir { FilePath().parent_path() };
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+
+    // Its extension kept: it tells the decoders (and SVG) what it is
+    std::string ext { source.extension().string() };
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return char(std::tolower(c)); });
+    const fs::path target { dir / (std::string(StoredPictureStem) + ext) };
+    const fs::path tmp { dir / (std::string(StoredPictureStem) + ".tmp" + ext) };
+
+    // Aside first, then renamed over the previous one: never half written
+    if (!fs::copy_file(source, tmp, fs::copy_options::overwrite_existing, ec))
+    {
+        Log(CZError, CZLN, "Can't copy the desktop picture {}: {}", source.string(), ec.message());
+        fs::remove(tmp, ec);
+        return source;
+    }
+
+    fs::rename(tmp, target, ec);
+
+    if (ec)
+    {
+        Log(CZError, CZLN, "Can't store the desktop picture at {}: {}", target.string(), ec.message());
+        fs::remove(tmp, ec);
+        return source;
+    }
+
+    // The previous one (another extension)
+    for (const auto &entry : fs::directory_iterator(dir, ec))
+        if (entry.path() != target && entry.path().stem() == StoredPictureStem)
+            fs::remove(entry.path(), ec);
+
+    Log(CZInfo, CZLN, "Desktop picture {} stored at {}", source.string(), target.string());
+    return target;
+}

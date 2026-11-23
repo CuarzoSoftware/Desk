@@ -15,7 +15,7 @@
  *
  * @code
  * [Background]
- * Picture=/home/user/Pictures/beach.jpg
+ * Picture=/home/user/.config/cz-desk/wallpaper.jpg
  * UsePicture=true
  * Fit=Cover
  * Color=#1F4E79
@@ -28,7 +28,7 @@
  * Notes.txt=0,2
  * @endcode
  *
- * `Fit` is `Cover` (fills the screen, cropping), `Contain` (whole picture, the color around it) or
+ * `Picture` is a copy of the chosen one (see StorePicture()). `Fit` is `Cover` (fills the screen, cropping), `Contain` (whole picture, the color around it) or
  * `Fill` (stretched). `SortBy` is `Custom` (the positions below), `Name`, `Kind` or `Size`.
  * Positions are grid cells, columns counted from the right edge. Their keys are percent-encoded
  * item keys (see DeskEntry::key).
@@ -64,6 +64,18 @@ public:
 
     /// Whether the background shows the picture.
     bool showsPicture() const noexcept { return usePicture && !picture.empty(); }
+
+    /**
+     * @brief Copies @p source as the desktop picture kept with the settings
+     *        (`cz-desk/wallpaper.<ext>` next to desk.conf), replacing the previous one.
+     *
+     * The background keeps showing even if the original is moved or deleted. Returns the copy's
+     * path, or @p source if it couldn't be copied (logged).
+     */
+    static std::filesystem::path StorePicture(const std::filesystem::path &source) noexcept;
+
+    /// Whether @p path is the copy made by StorePicture().
+    static bool IsStoredPicture(const std::filesystem::path &path) noexcept;
 
     static std::filesystem::path FilePath() noexcept;
 };

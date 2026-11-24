@@ -114,7 +114,7 @@ void Desk::onScreenUnplugged(MScreen &screen) noexcept
 void Desk::loadTopbarScale() noexcept
 {
     const fs::path path { Settings::FilePath().parent_path().parent_path() / "cz-firmament" / "firmament.conf" };
-    m_topbarScale = 1.f;
+    m_topbarScale = 1.2f; // Firmament's default (TOPBAR_DEFAULT_SCALE)
     std::error_code ec;
 
     if (!fs::is_regular_file(path, ec))

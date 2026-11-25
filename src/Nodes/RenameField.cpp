@@ -1,32 +1,66 @@
 #include <Nodes/RenameField.h>
-#include <Nodes/DeskItem.h>
-#include <Core/Desk.h>
 #include <Core/Log.h>
 #include <CZ/AK/AKTheme.h>
+#include <CZ/AK/AKScene.h>
+#include <CZ/Core/Events/CZColorSchemeEvent.h>
 
 using namespace skia::textlayout;
 
 static constexpr Int32 PadY { 1 };
 
-RenameField::RenameField(AKNode *parent) noexcept :
-    AKRoundSolidColor(SK_ColorWHITE, CZBorderRadius::Make(4), parent)
+RenameField::RenameField(AKNode *parent, Style style) noexcept :
+    AKRoundSolidColor(SK_ColorWHITE, CZBorderRadius::Make(4), parent),
+    m_style(style)
 {
     layout().setPositionType(YGPositionTypeAbsolute);
     layout().setFlexDirection(YGFlexDirectionColumn);
-    layout().setAlignItems(YGAlignCenter);
-    layout().setPadding(YGEdgeHorizontal, DESK_LABEL_PADDING_X);
     layout().setPadding(YGEdgeVertical, PadY);
+    enableChildrenClipping(true); // Long names don't spill out
     setVisible(false);
 
-    // Like the label (see ItemLabel), dark on white
-    TextStyle style { theme()->DefaultTextStyle };
-    style.setFontSize(DESK_LABEL_FONT_SIZE);
-    style.setFontStyle(SkFontStyle(SkFontStyle::kMedium_Weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
-    style.resetShadows();
-    editor.setTextStyle(style);
-    editor.setTextColor(CZAdaptiveColor(0xFF000000));
-    editor.setSelectionColor(CZAdaptiveColor(0xFFB3D7FF));
-    editor.setTextAlign(TextAlign::kCenter);
+    TextStyle text { theme()->DefaultTextStyle };
+    text.resetShadows();
+
+    if (style == Style::Label)
+    {
+        // Like the label (see ItemLabel), dark on white
+        layout().setAlignItems(YGAlignCenter);
+        layout().setPadding(YGEdgeHorizontal, DESK_LABEL_PADDING_X);
+        text.setFontSize(DESK_LABEL_FONT_SIZE);
+        text.setFontStyle(SkFontStyle(SkFontStyle::kMedium_Weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
+        editor.setTextStyle(text);
+        editor.setTextColor(CZAdaptiveColor(0xFF000000));
+        editor.setSelectionColor(CZAdaptiveColor(0xFFB3D7FF));
+        editor.setTextAlign(TextAlign::kCenter);
+    }
+    else if (style == Style::Grid)
+    {
+        // Like a window icon's label (see ItemLabel::Style::Window), in a field with a focus ring
+        layout().setAlignItems(YGAlignCenter);
+        layout().setPadding(YGEdgeHorizontal, DESK_LABEL_PADDING_X);
+        setStrokeWidth(2);
+        updateColors();
+        text.setFontSize(DESK_WINDOW_LABEL_FONT_SIZE);
+        editor.setTextStyle(text);
+        editor.setTextColor(AKTheme::Label);
+        editor.setSelectionColor(CZAdaptiveColor(0xFFB3D7FF, 0xFF3F638B));
+        editor.setTextAlign(TextAlign::kCenter);
+    }
+    else
+    {
+        // Like the row's name (see FolderListRow), in a field with a focus ring
+        layout().setAlignItems(YGAlignFlexStart);
+        layout().setJustifyContent(YGJustifyCenter);
+        layout().setPadding(YGEdgeHorizontal, 3.f);
+        setStrokeWidth(2);
+        updateColors();
+        text.setFontSize(DESK_LIST_FONT_SIZE);
+        editor.setTextStyle(text);
+        editor.setTextColor(AKTheme::Label);
+        editor.setSelectionColor(CZAdaptiveColor(0xFFB3D7FF, 0xFF3F638B));
+        editor.setTextAlign(TextAlign::kLeft);
+    }
+
     editor.setEditable(true);
 
     editor.onSubmit.subscribe(this, [this]{ commit(); });
@@ -38,21 +72,23 @@ RenameField::RenameField(AKNode *parent) noexcept :
     });
 }
 
-void RenameField::begin(DeskItem &item, const SkIRect &label) noexcept
+void RenameField::begin(const DeskEntry &entry, const SkIRect &box, std::function<void(bool editing)> editing) noexcept
 {
     if (active())
         cancel();
 
-    const DeskEntry &entry { item.entry() };
-
     if (entry.kind != DeskEntry::Kind::File || entry.launcher)
         return;
 
-    m_key = entry.key;
-    m_item.reset(&item);
+    m_entry = entry;
+    m_editing = std::move(editing);
 
     const std::string name { entry.path.filename().string() };
-    editor.setWrapWidth(SkScalar(std::max(1, label.width() - 2 * DESK_LABEL_PADDING_X)));
+
+    // The label's lines wrap at its width (a list's name is a single line)
+    if (m_style != Style::List)
+        editor.setWrapWidth(SkScalar(std::max(1, box.width() - 2 * DESK_LABEL_PADDING_X)));
+
     editor.setText(name);
 
     // The name without its extension (folders and dot files: all of it)
@@ -63,17 +99,40 @@ void RenameField::begin(DeskItem &item, const SkIRect &label) noexcept
             end = dot;
 
     editor.setSelection(0, end);
-    item.label.setOpacity(0.f);
-    place(label);
+
+    if (m_editing)
+        m_editing(true);
+
+    place(box);
     setVisible(true);
     editor.setKeyboardFocus(true);
 }
 
-void RenameField::place(const SkIRect &label) noexcept
+void RenameField::colorSchemeEvent(const CZColorSchemeEvent &e)
 {
-    layout().setPosition(YGEdgeLeft, label.x());
-    layout().setPosition(YGEdgeTop, label.y());
-    layout().setWidth(label.width());
+    AKRoundSolidColor::colorSchemeEvent(e);
+    updateColors();
+}
+
+void RenameField::updateColors() noexcept
+{
+    // The desktop label's look is always dark on white (over the wallpaper)
+    if (m_style == Style::Label)
+        return;
+
+    setBackgroundColor(AKTheme::WindowBackground.resolve(colorScheme()));
+    setStrokeColor(AKTheme::KeyboardFocusIndicator.resolve(colorScheme()));
+}
+
+void RenameField::place(const SkIRect &box) noexcept
+{
+    layout().setPosition(YGEdgeLeft, box.x());
+    layout().setPosition(YGEdgeTop, box.y());
+    layout().setWidth(box.width());
+
+    // A row's height (a label grows with its lines)
+    if (m_style == Style::List)
+        layout().setHeight(box.height());
 }
 
 bool RenameField::commit() noexcept
@@ -81,16 +140,15 @@ bool RenameField::commit() noexcept
     if (!active())
         return true;
 
-    const DeskEntry *entry { GetDesk()->entry(m_key) };
     const std::string name { editor.text() };
 
-    if (!entry || name.empty() || name == entry->path.filename().string())
+    if (name.empty() || name == m_entry.path.filename().string())
     {
         end();
         return true;
     }
 
-    const std::string key { GetDesk()->rename(*entry, name) };
+    const std::string key { GetDesk()->rename(m_entry, name) };
 
     if (key.empty())
     {
@@ -119,16 +177,18 @@ void RenameField::end() noexcept
 
     m_ending = true;
 
-    if (m_item)
-        m_item->label.setOpacity(1.f);
-
-    m_key.clear();
-    m_item.reset();
+    // Ended first (e.g. the name below shown again if it's rebound meanwhile)
+    const auto editing { std::move(m_editing) };
+    m_entry = {};
+    m_editing = nullptr;
     setVisible(false);
 
-    // Back to the desktop (its keys: Enter, Delete, shortcuts)
-    if (parent())
-        parent()->setKeyboardFocus(true);
+    if (editing)
+        editing(false);
+
+    // Back to the desktop or window (its keys: Enter, Delete, shortcuts)
+    if (scene() && scene()->root())
+        scene()->root()->setKeyboardFocus(true);
 
     m_ending = false;
 }

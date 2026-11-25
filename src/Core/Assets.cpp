@@ -316,8 +316,18 @@ std::shared_ptr<RImage> Assets::thumbnail(const fs::path &path, Int32 maxSize) n
     if (auto it { m_thumbnails.find(path.string()) }; it != m_thumbnails.end() && it->second.mtime == mtime && it->second.maxSize >= maxSize)
         return it->second.image;
 
-    if (std::none_of(m_thumbnailQueue.begin(), m_thumbnailQueue.end(), [&](const auto &q){ return q.first == path; }))
-        m_thumbnailQueue.emplace_back(path, maxSize);
+    // Requested again: it moves to the back (decoded first), one more waiting for it
+    const auto it { std::find_if(m_thumbnailQueue.begin(), m_thumbnailQueue.end(), [&](const auto &q){ return q.path == path; }) };
+    ThumbnailRequest request { path, maxSize, 1 };
+
+    if (it != m_thumbnailQueue.end())
+    {
+        request.maxSize = std::max(maxSize, it->maxSize);
+        request.waiting = it->waiting + 1;
+        m_thumbnailQueue.erase(it);
+    }
+
+    m_thumbnailQueue.emplace_back(std::move(request));
 
     if (m_thumbnailTimer)
         m_thumbnailTimer->start(0);
@@ -325,13 +335,23 @@ std::shared_ptr<RImage> Assets::thumbnail(const fs::path &path, Int32 maxSize) n
     return {};
 }
 
+void Assets::cancelThumbnail(const fs::path &path) noexcept
+{
+    const auto it { std::find_if(m_thumbnailQueue.begin(), m_thumbnailQueue.end(), [&](const auto &q){ return q.path == path; }) };
+
+    if (it != m_thumbnailQueue.end() && --it->waiting == 0)
+        m_thumbnailQueue.erase(it);
+}
+
 void Assets::processThumbnailQueue() noexcept
 {
     if (m_thumbnailQueue.empty())
         return;
 
-    const auto [path, maxSize] { m_thumbnailQueue.front() };
-    m_thumbnailQueue.pop_front();
+    // The latest request first (what's in view now)
+    const fs::path path { m_thumbnailQueue.back().path };
+    const Int32 maxSize { m_thumbnailQueue.back().maxSize };
+    m_thumbnailQueue.pop_back();
 
     std::error_code ec;
     Thumbnail &thumb { m_thumbnails[path.string()] };

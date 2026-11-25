@@ -57,15 +57,21 @@ MenuBar::MenuBar() noexcept
                 desk->setPicture(entries.front()->path);
     });
 
-    /* Edit (like Finder: the clipboard isn't supported on the desktop yet) */
+    /* Edit (files: see Desk::copyFiles()) */
 
     m_edit = addMenu(m_topbar.get(), "Edit");
     addAction(m_edit.get(), "Undo", "⌘Z", nullptr, false);
     addAction(m_edit.get(), "Redo", "⇧⌘Z", nullptr, false);
     addDivider(m_edit.get());
-    addAction(m_edit.get(), "Cut", "⌘X", nullptr, false);
-    addAction(m_edit.get(), "Copy", "⌘C", nullptr, false);
-    addAction(m_edit.get(), "Paste", "⌘V", nullptr, false);
+    const auto cut = [desk]{ if (auto *bg { desk->iconsBackground() }) bg->copySelection(true); };
+    const auto copy = [desk]{ if (auto *bg { desk->iconsBackground() }) bg->copySelection(false); };
+    const auto paste = [desk]{ desk->pasteInto(desk->desktopDir()); };
+    m_cut = addAction(m_edit.get(), "Cut", "⌘X", cut);
+    m_shortcuts.push_back({ KEY_X, false, m_cut, cut });
+    m_copy = addAction(m_edit.get(), "Copy", "⌘C", copy);
+    m_shortcuts.push_back({ KEY_C, false, m_copy, copy });
+    m_paste = addAction(m_edit.get(), "Paste", "⌘V", paste);
+    m_shortcuts.push_back({ KEY_V, false, nullptr, paste }); // The clipboard may have changed since update()
     auto selectAll { addAction(m_edit.get(), "Select All", "⌘A", [desk]{ if (auto *bg { desk->iconsBackground() }) bg->selectAll(); }) };
     m_shortcuts.push_back({ KEY_A, false, selectAll, [desk]{ if (auto *bg { desk->iconsBackground() }) bg->selectAll(); } });
 
@@ -128,6 +134,15 @@ MenuBar::MenuBar() noexcept
 }
 
 MenuBar::~MenuBar() noexcept = default;
+
+void MenuBar::activate() noexcept
+{
+    if (!m_client || !m_topbar || m_client->activeTopbar() == m_topbar.get())
+        return;
+
+    m_client->setActiveTopbar(m_topbar.get());
+    m_client->commit();
+}
 
 std::shared_ptr<HNMenu> MenuBar::addMenu(HNObject *parent, const std::string &title) noexcept
 {
@@ -233,6 +248,9 @@ void MenuBar::update() noexcept
 
     m_open->setEnabled(!entries.empty());
     m_trash->setEnabled(anyFile);
+    m_cut->setEnabled(anyFile);
+    m_copy->setEnabled(anyFile);
+    m_paste->setEnabled(desk->canPaste());
     m_eject->setEnabled(anyEjectable);
     m_setPicture->setEnabled(picture);
     m_cleanUp->setEnabled(s.sortBy == Settings::SortBy::Custom && !s.positions.empty());

@@ -18,7 +18,7 @@
  * on the desktop of the primary screen: its selection, icons and background.
  *
  * - **File**: New Window, New Folder, Open, Open With, Move to Trash, Eject, Set Desktop Picture
- * - **Edit**: Select All (Undo, Cut, Copy and Paste are shown disabled, like Finder with icons)
+ * - **Edit**: Cut, Copy, Paste (files, see Desk::copyFiles()), Select All (Undo and Redo disabled)
  * - **View**: Sort By (Name, Kind, Size, Custom), Clean Up, icon size, desktop picture options
  * - **Go**: the user folders, Computer and Trash
  *
@@ -32,6 +32,9 @@ public:
 
     /// Refreshes the enabled/checked states (selection or settings changed) and commits.
     void update() noexcept;
+
+    /// Shown in the menu bar (the desktop is active, see WindowMenuBar for the windows' menus).
+    void activate() noexcept;
 
     /// Runs the menu item with the shortcut Ctrl(+Shift)+@p key. Returns false if there's none.
     bool shortcut(UInt32 key, bool shift) noexcept;
@@ -58,6 +61,7 @@ private:
     std::vector<std::shared_ptr<CZ::HNClientAPI::HNObject>> m_openWithItems;
     std::string m_openWithKey;
 
+    std::shared_ptr<CZ::HNClientAPI::HNAction> m_cut, m_copy, m_paste;
     std::shared_ptr<CZ::HNClientAPI::HNAction> m_open, m_trash, m_eject, m_setPicture, m_larger, m_smaller, m_cleanUp;
     std::shared_ptr<CZ::HNClientAPI::HNToggle> m_showPicture, m_fill, m_fit, m_stretch;
     std::vector<std::pair<std::shared_ptr<CZ::HNClientAPI::HNToggle>, Settings::SortBy>> m_sortToggles;

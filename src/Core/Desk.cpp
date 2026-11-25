@@ -13,6 +13,16 @@
 #include <CZ/XDG/XDGTrash.h>
 #include <cmath>
 #include <CZ/XDG/XDGINI.h>
+#include <CZ/Marco/MDNDOffer.h>
+#include <CZ/AK/AKApp.h>
+#include <CZ/AK/AKClipboard.h>
+#include <CZ/AK/Input/AKPointer.h>
+#include <CZ/AK/Input/AKKeyboard.h>
+#include <CZ/Core/Events/CZPointerButtonEvent.h>
+#include <CZ/Core/Events/CZKeyboardKeyEvent.h>
+#include <chrono>
+#include <poll.h>
+#include <string_view>
 #include <CZ/Core/CZEventSource.h>
 #include <CZ/Core/CZBus.h>
 #include <systemd/sd-bus.h>
@@ -171,8 +181,28 @@ void Desk::setDragSource(Background *background) noexcept
     m_dragSource.reset(background);
 }
 
+void Desk::windowDeactivated() noexcept
+{
+    // Later: the next window may be activated right after (its menus then). Owned: never after Desk.
+    if (!m_deactivatedTimer)
+        m_deactivatedTimer = std::make_unique<CZTimer>([this](CZTimer*){
+            for (const auto &w : m_windows)
+                if (w && w->activated())
+                    return;
+
+            if (menuBar)
+                menuBar->activate();
+        });
+
+    m_deactivatedTimer->start(0);
+}
+
 void Desk::setActiveBackground(Background *background) noexcept
 {
+    // The desktop's menus in the menu bar (a window's may have been shown)
+    if (menuBar)
+        menuBar->activate();
+
     if (m_activeBackground.get() == background)
         return;
 
@@ -389,7 +419,8 @@ void Desk::shortcut(UInt32 key, bool shift) noexcept
 
 /*
  * org.cuarzo.Desk on the session bus: lets the dock know the desktop is running (it shows a Desk
- * tile, like Finder's) and open a file manager window when it's clicked.
+ * tile, like Finder's) and open a file manager window when it's clicked. Emits AppLaunched(s app
+ * id) when the user opens an app (see announceLaunch()).
  */
 
 static int NewWindowMethod(sd_bus_message *m, void *, sd_bus_error *)
@@ -822,6 +853,10 @@ std::vector<DeskEntry> Desk::ScanFolder(XDGKit &kit, const fs::path &dir, bool h
         if (std::error_code sec; dirEntry.is_regular_file(sec))
             file.size = dirEntry.file_size(sec);
 
+        if (std::error_code tec; true)
+            if (const auto time { dirEntry.last_write_time(tec) }; !tec)
+                file.modified = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+
         if (file.mimeType == "application/x-desktop" || name.ends_with(".desktop"))
         {
             if ((file.launcher = XDGDesktopEntry::Load(file.path)) && !file.launcher->name.empty())
@@ -901,6 +936,63 @@ const DeskEntry *Desk::entry(const std::string &key) const noexcept
 
 /* ---------------------------------------- Actions ---------------------------------------- */
 
+std::string Desk::FormatBytes(UInt64 bytes) noexcept
+{
+    static const char *units[] { "bytes", "KB", "MB", "GB", "TB", "PB" };
+    double value { double(bytes) };
+    size_t unit { 0 };
+
+    while (value >= 1000.0 && unit + 1 < std::size(units))
+    {
+        value /= 1000.0;
+        unit++;
+    }
+
+    char buf[32];
+
+    if (unit == 0)
+        snprintf(buf, sizeof(buf), bytes == 1 ? "%llu byte" : "%llu %s", (unsigned long long)bytes, units[0]);
+    else
+        snprintf(buf, sizeof(buf), value < 10.0 ? "%.1f %s" : "%.0f %s", value, units[unit]);
+
+    return buf;
+}
+
+std::string Desk::FormatDate(std::time_t time) noexcept
+{
+    if (time == 0)
+        return "--";
+
+    std::tm when {}, now {};
+    const std::time_t current { std::time(nullptr) };
+    localtime_r(&time, &when);
+    localtime_r(&current, &now);
+
+    // Days apart (calendar days, not 24 h periods)
+    std::tm whenDay { when }, nowDay { now };
+    whenDay.tm_hour = nowDay.tm_hour = 12;
+    whenDay.tm_min = nowDay.tm_min = whenDay.tm_sec = nowDay.tm_sec = 0;
+    const long days { std::lround(std::difftime(std::mktime(&nowDay), std::mktime(&whenDay)) / 86400.0) };
+
+    char clock[16];
+    std::strftime(clock, sizeof(clock), "%H:%M", &when);
+
+    if (days == 0)
+        return std::string("Today at ") + clock;
+
+    if (days == 1)
+        return std::string("Yesterday at ") + clock;
+
+    char date[64];
+    std::strftime(date, sizeof(date), "%e %b %Y at %H:%M", &when);
+    std::string out { date };
+
+    if (!out.empty() && out.front() == ' ')
+        out.erase(0, 1);
+
+    return out;
+}
+
 bool Desk::Spawn(const std::vector<std::string> &args) noexcept
 {
     // Detached, started from a background thread: never blocks the UI
@@ -920,7 +1012,9 @@ std::unordered_set<std::string> Desk::open(const std::vector<const DeskEntry*> &
     {
         if (e->launcher)
         {
-            e->launcher->launch();
+            if (e->launcher->launch())
+                announceLaunch(*e->launcher);
+
             continue;
         }
 
@@ -942,7 +1036,10 @@ std::unordered_set<std::string> Desk::open(const std::vector<const DeskEntry*> &
         if (auto app { xdgkit->mimeDatabase().defaultApp(e->mimeType) })
         {
             Log(CZInfo, CZLN, "Opening {} ({}) with {}", e->path.string(), e->mimeType, app->id);
-            app->open({ e->path });
+
+            if (app->open({ e->path }))
+                announceLaunch(*app);
+
             continue;
         }
 
@@ -957,7 +1054,25 @@ std::unordered_set<std::string> Desk::open(const std::vector<const DeskEntry*> &
 void Desk::openWith(const DeskEntry &entry, const XDGDesktopEntry &app) noexcept
 {
     Log(CZInfo, CZLN, "Opening {} with {}", entry.path.string(), app.id);
-    app.open({ entry.path });
+
+    if (app.open({ entry.path }))
+        announceLaunch(app);
+}
+
+void Desk::announceLaunch(const XDGDesktopEntry &app) noexcept
+{
+    // The user launched it (like from the dock): Crystals shows its first window, switching to the
+    // workspace where it opens (other windows appearing elsewhere only make their icon bounce)
+    if (!m_bus || app.id.empty())
+        return;
+
+    sd_bus_emit_signal(m_bus->bus(), "/org/cuarzo/Desk", "org.cuarzo.Desk", "AppLaunched", "s", app.id.c_str());
+
+    // Its windows' app id, if it's another one (Crystals matches it against theirs)
+    if (!app.startupWMClass.empty() && app.startupWMClass != app.id)
+        sd_bus_emit_signal(m_bus->bus(), "/org/cuarzo/Desk", "org.cuarzo.Desk", "AppLaunched", "s", app.startupWMClass.c_str());
+
+    sd_bus_flush(m_bus->bus());
 }
 
 void Desk::trash(const std::vector<const DeskEntry*> &entries) noexcept
@@ -985,6 +1100,222 @@ void Desk::trash(const std::vector<const DeskEntry*> &entries) noexcept
     }
 
     scheduleRescan();
+}
+
+/* --------------------------------------- Drag & drop --------------------------------------- */
+
+// Reads all of @p fd (another process writes it), giving up after @p timeoutMs.
+static std::string ReadAll(Int32 fd, Int32 timeoutMs) noexcept
+{
+    std::string data;
+    const auto deadline { std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs) };
+    char buf[4096];
+
+    while (true)
+    {
+        const auto left { std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count() };
+
+        if (left <= 0)
+        {
+            Log(CZWarning, CZLN, "Timed out reading the dropped files");
+            break;
+        }
+
+        pollfd pfd { fd, POLLIN, 0 };
+
+        if (poll(&pfd, 1, Int32(left)) <= 0)
+            continue;
+
+        const ssize_t n { read(fd, buf, sizeof(buf)) };
+
+        if (n > 0)
+            data.append(buf, size_t(n));
+        else if (n == 0 || errno != EINTR)
+            break;
+    }
+
+    return data;
+}
+
+static bool IsOwnDrag(const Desk &desk, MDNDOffer &offer) noexcept
+{
+    return !desk.dragFiles().empty() && (offer.hasMimeType(DESK_ITEMS_MIME_TYPE) || offer.hasMimeType(DESK_FILES_MIME_TYPE));
+}
+
+bool Desk::offersFiles(MDNDOffer &offer) const noexcept
+{
+    // The dock's apps are launchers, not files to move
+    return IsOwnDrag(*this, offer) || (offer.hasMimeType("text/uri-list") && !offer.hasMimeType("application/x-cz-shelf-app"));
+}
+
+std::string Desk::URIList(const std::vector<std::filesystem::path> &files) noexcept
+{
+    static constexpr char hex[] { "0123456789ABCDEF" };
+    std::string uris;
+
+    for (const auto &file : files)
+    {
+        std::string encoded;
+
+        for (const unsigned char c : file.string())
+        {
+            if (std::isalnum(c) || std::strchr("/-._~", c))
+                encoded += char(c);
+            else
+            {
+                encoded += '%';
+                encoded += hex[c >> 4];
+                encoded += hex[c & 0xF];
+            }
+        }
+
+        uris += "file://" + encoded + "\r\n";
+    }
+
+    return uris;
+}
+
+std::vector<std::filesystem::path> Desk::dropInto(const std::filesystem::path &dir, bool copyByDefault, MDNDOffer &offer) noexcept
+{
+    // The action chosen by the compositor (e.g. a modifier held), else the target's default.
+    const bool copy { offer.action() == MDNDOffer::Copy || (offer.action() != MDNDOffer::Move && copyByDefault) };
+    auto files { receiveDrop(offer) };
+    transfer(files, dir, copy);
+    return files;
+}
+
+std::vector<std::filesystem::path> Desk::receiveDrop(MDNDOffer &offer) noexcept
+{
+    std::vector<std::filesystem::path> files;
+
+    if (IsOwnDrag(*this, offer))
+    {
+        // Desk's own (a desktop's icons, a folder window's files): the files are known (and Desk
+        // itself is the source, so reading its data here would wait for ourselves).
+        files = m_dragFiles;
+
+        if (const Int32 fd { offer.receive(offer.hasMimeType(DESK_ITEMS_MIME_TYPE) ? DESK_ITEMS_MIME_TYPE : DESK_FILES_MIME_TYPE) }; fd >= 0)
+            close(fd);
+    }
+    else if (const Int32 fd { offer.receive("text/uri-list") }; fd >= 0)
+    {
+        // Another app: a list of URIs, one per line ('#' lines are comments). Small, written right
+        // away by the source; a short timeout in case it never does.
+        const std::string list { ReadAll(fd, 1000) };
+        close(fd);
+
+        size_t start { 0 };
+
+        while (start < list.size())
+        {
+            size_t end { list.find('\n', start) };
+
+            if (end == std::string::npos)
+                end = list.size();
+
+            std::string line { list.substr(start, end - start) };
+            start = end + 1;
+
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+
+            if (line.empty() || line.front() == '#')
+                continue;
+
+            if (auto path { PathFromURI(line) }; !path.empty())
+                files.emplace_back(std::move(path));
+        }
+    }
+
+    offer.finish();
+    return files;
+}
+
+/* ---------------------------------------- Favorites ---------------------------------------- */
+
+static fs::path NormalizedDir(const fs::path &dir) noexcept
+{
+    std::error_code ec;
+    fs::path normal { fs::weakly_canonical(dir, ec) };
+
+    if (ec)
+        normal = dir.lexically_normal();
+
+    if (normal.has_relative_path() && normal.filename().empty())
+        normal = normal.parent_path();
+
+    return normal;
+}
+
+std::vector<fs::path> Desk::favorites() const noexcept
+{
+    if (settings.favorites)
+        return *settings.favorites;
+
+    // Like Finder's: home, the desktop, the apps and the other user folders (those that exist)
+    std::vector<fs::path> dirs;
+    std::error_code ec;
+
+    for (const fs::path &dir : { fs::path(xdgkit->homeDir()), desktopDir(), fs::path("/usr/share/applications"), userDir("DOCUMENTS", "Documents"),
+                                 userDir("DOWNLOAD", "Downloads"), userDir("PICTURES", "Pictures"),
+                                 userDir("MUSIC", "Music"), userDir("VIDEOS", "Videos") })
+    {
+        const fs::path normal { NormalizedDir(dir) };
+
+        if (fs::is_directory(normal, ec) && std::find(dirs.begin(), dirs.end(), normal) == dirs.end())
+            dirs.emplace_back(normal);
+    }
+
+    return dirs;
+}
+
+void Desk::placeFavorites(const std::vector<fs::path> &added, size_t index) noexcept
+{
+    auto dirs { favorites() };
+    std::vector<fs::path> placed;
+    std::error_code ec;
+
+    for (const auto &dir : added)
+    {
+        const fs::path normal { NormalizedDir(dir) };
+
+        if (!fs::is_directory(normal, ec) || std::find(placed.begin(), placed.end(), normal) != placed.end())
+            continue;
+
+        // Already there: moved (the place counts without it)
+        if (auto it { std::find(dirs.begin(), dirs.end(), normal) }; it != dirs.end())
+        {
+            if (size_t(it - dirs.begin()) < index)
+                index--;
+
+            dirs.erase(it);
+        }
+
+        placed.emplace_back(normal);
+    }
+
+    if (placed.empty())
+        return;
+
+    index = std::min(index, dirs.size());
+    dirs.insert(dirs.begin() + Int64(index), placed.begin(), placed.end());
+    settings.favorites = std::move(dirs);
+    saveSettings();
+    onFavoritesChanged.notify();
+}
+
+void Desk::removeFavorite(const fs::path &dir) noexcept
+{
+    auto dirs { favorites() };
+    const fs::path normal { NormalizedDir(dir) };
+
+    if (std::erase_if(dirs, [&normal](const fs::path &d){ return NormalizedDir(d) == normal; }) == 0)
+        return;
+
+    // Saved even if empty (no favorites, not the defaults)
+    settings.favorites = std::move(dirs);
+    saveSettings();
+    onFavoritesChanged.notify();
 }
 
 void Desk::transfer(const std::vector<std::filesystem::path> &files, const std::filesystem::path &dir, bool copy) noexcept
@@ -1021,6 +1352,21 @@ void Desk::transfer(const std::vector<std::filesystem::path> &files, const std::
         if (!rel.empty() && *rel.begin() != "..")
             continue;
 
+        // Copied where it already is: a copy next to it with another name ("Notes copy.txt", like Finder)
+        if (copy && src.parent_path() == target)
+        {
+            const std::string stem { src.stem().string() }, ext { fs::is_directory(src, ec) ? std::string() : src.extension().string() };
+            const std::string base { fs::is_directory(src, ec) ? src.filename().string() : stem };
+            fs::path dest { target / (base + " copy" + ext) };
+
+            for (int n { 2 }; fs::exists(fs::symlink_status(dest, ec)); n++)
+                dest = target / (base + " copy " + std::to_string(n) + ext);
+
+            Log(CZInfo, CZLN, "Copying {} to {}", src.string(), dest.string());
+            Spawn({ "cp", "-rn", "--", src.string(), dest.string() });
+            continue;
+        }
+
         // Like Finder: moving to another disk copies.
         if (copy || srcStat.st_dev != targetStat.st_dev)
             copies.emplace_back(src.string());
@@ -1039,6 +1385,105 @@ void Desk::transfer(const std::vector<std::filesystem::path> &files, const std::
         Log(CZInfo, CZLN, "Copying {} item(s) into {}", copies.size() - fixed, target.string());
         Spawn(copies);
     }
+}
+
+/* ---------------------------------------- Clipboard ---------------------------------------- */
+
+static constexpr const char *CopiedFilesMime { "x-special/gnome-copied-files" };
+
+// The app's latest input event (the compositor gives the clipboard to clients that just got input;
+// menu bar clicks come from the bar's process)
+static const CZInputEvent &LatestInput() noexcept
+{
+    auto app { AKApp::Get() };
+    const CZInputEvent &button { app->pointer().history().button };
+    const CZInputEvent &key { app->keyboard().history().key };
+    return key.serial > button.serial ? key : button;
+}
+
+void Desk::copyFiles(const std::vector<fs::path> &files, bool cut) noexcept
+{
+    AKClipboard *clipboard { AKApp::Get() ? AKApp::Get()->clipboard() : nullptr };
+
+    if (!clipboard || files.empty())
+        return;
+
+    std::string uris { URIList(files) }; // "file://...\r\n" each
+    std::string copied { cut ? "cut" : "copy" }, paths;
+
+    for (size_t start { 0 }; start < uris.size();)
+    {
+        const size_t end { uris.find("\r\n", start) };
+        copied += "\n" + uris.substr(start, end - start);
+        start = end == std::string::npos ? uris.size() : end + 2;
+    }
+
+    for (const auto &file : files)
+        paths += (paths.empty() ? "" : "\n") + file.string();
+
+    Log(CZInfo, CZLN, "{} {} item(s)", cut ? "Cut" : "Copied", files.size());
+    clipboard->setData({ { CopiedFilesMime, copied }, { "text/uri-list", uris }, { "text/plain;charset=utf-8", paths } }, LatestInput());
+}
+
+bool Desk::canPaste() const noexcept
+{
+    AKClipboard *clipboard { AKApp::Get() ? AKApp::Get()->clipboard() : nullptr };
+
+    if (!clipboard)
+        return false;
+
+    const auto types { clipboard->mimeTypes() };
+    return std::find(types.begin(), types.end(), CopiedFilesMime) != types.end() ||
+           std::find(types.begin(), types.end(), "text/uri-list") != types.end();
+}
+
+void Desk::pasteInto(const fs::path &dir) noexcept
+{
+    AKClipboard *clipboard { AKApp::Get() ? AKApp::Get()->clipboard() : nullptr };
+
+    if (!clipboard)
+        return;
+
+    clipboard->requestData({ CopiedFilesMime, "text/uri-list" }, [dir](std::optional<AKClipboard::Format> data){
+        if (!data)
+            return;
+
+        // "copy" or "cut", then a URI per line (gnome-copied-files), or only URIs ('#': comments)
+        std::vector<fs::path> files;
+        bool cut { false }, first { true };
+        size_t start { 0 };
+        const std::string &list { data->second };
+
+        while (start < list.size())
+        {
+            size_t end { list.find('\n', start) };
+
+            if (end == std::string::npos)
+                end = list.size();
+
+            std::string line { list.substr(start, end - start) };
+            start = end + 1;
+
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+
+            if (first && data->first == CopiedFilesMime)
+            {
+                first = false;
+                cut = line == "cut";
+                continue;
+            }
+
+            if (line.empty() || line.front() == '#')
+                continue;
+
+            if (auto path { PathFromURI(line) }; !path.empty())
+                files.emplace_back(std::move(path));
+        }
+
+        if (!files.empty())
+            GetDesk()->transfer(files, dir, !cut);
+    });
 }
 
 void Desk::eject(const DeskEntry &volume) noexcept
@@ -1114,7 +1559,7 @@ std::string Desk::rename(const DeskEntry &entry, const std::string &name) noexce
     // Keep its place (keys are file names)
     const std::string key { to.filename().string() };
 
-    if (auto it { settings.positions.find(entry.key) }; it != settings.positions.end())
+    if (auto it { settings.positions.find(entry.key) }; entry.path.parent_path() == m_desktopDir && it != settings.positions.end())
     {
         const SkIPoint cell { it->second };
         settings.positions.erase(it);
@@ -1123,7 +1568,9 @@ std::string Desk::rename(const DeskEntry &entry, const std::string &name) noexce
     }
 
     Log(CZInfo, CZLN, "Renamed {} to \"{}\"", entry.path.string(), name);
-    rescan();
+
+    if (entry.path.parent_path() == m_desktopDir)
+        rescan();
     return key;
 }
 

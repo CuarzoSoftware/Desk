@@ -16,6 +16,9 @@ class SelectionBox final : public AKContainer
 public:
     SelectionBox(AKNode *parent = nullptr) noexcept;
 
+    /// Over a folder window (darker, see DESK_WINDOW_RUBBER_FILL) instead of the desktop's picture.
+    void setWindowColors() noexcept;
+
     /// Shows the box over @p rect (surface coordinates), or hides it with an empty rect.
     void setRect(const SkIRect &rect) noexcept;
 

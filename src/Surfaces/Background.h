@@ -5,6 +5,7 @@
 #include <Nodes/DeskItem.h>
 #include <Nodes/SelectionBox.h>
 #include <Nodes/DragStack.h>
+#include <Nodes/DragGather.h>
 #include <Nodes/RenameField.h>
 #include <Surfaces/ContextMenu.h>
 #include <CZ/Marco/Roles/MLayerSurface.h>
@@ -54,6 +55,9 @@ public:
     UInt32 m_lastReturnMs { 0 }; // Return opens the selection when pressed twice
     void trashSelection() noexcept;
 
+    /// The selected files on the clipboard: copied, or moved if @p cut, where they're pasted (see Desk::copyFiles()).
+    void copySelection(bool cut) noexcept;
+
     /// Creates a new folder and selects it.
     void newFolder() noexcept;
 
@@ -102,9 +106,6 @@ private:
     /// Whether the drag carries files from another app (dropped on the desktop or a folder).
     static bool HasForeignFiles(MDNDOffer &offer) noexcept;
 
-    /// Completes a drop into the folder @p dir (moved, or copied if @p copyByDefault and no action
-    /// was chosen). Returns the dropped files.
-    std::vector<std::filesystem::path> droppedInto(const std::filesystem::path &dir, bool copyByDefault, MDNDOffer &offer) noexcept;
 
     /* Menus */
     void openItemsMenu(const CZPointerButtonEvent &event) noexcept;
@@ -150,26 +151,13 @@ private:
     std::unique_ptr<DeskItem> m_dndItem;   // What's dragged (one item): a copy of it (rebuilt per drag)
     std::unique_ptr<DragStack> m_dndStack; // What's dragged (several): their icons stacked, with a count
 
-    // Dragging several: copies of the other icons fly from their cells to the pointer, then the drag
-    // icon becomes the full stack (see gatherFinished()).
-    void gatherStep(Float64 progress) noexcept;
+    // Dragging several: the other icons fly to the pointer (see DragGather), then the drag icon
+    // becomes the full stack (see gatherFinished()).
     void gatherFinished() noexcept;
     void setDragImage(const std::vector<std::shared_ptr<RImage>> &images, UInt32 count) noexcept;
-    // A copy of an icon flying to the pointer, in its own positioned box.
-    struct Flyer
-    {
-        Flyer(AKNode *parent, const SkPoint &from, Int32 depth) noexcept :
-            box(YGFlexDirectionColumn, false, parent), from(from), depth(depth) {}
-        AKContainer box;
-        IconView view { &box };
-        SkPoint from;
-        Int32 depth; // Its layer in the final stack (0 = front)
-    };
-    std::vector<std::unique_ptr<Flyer>> m_flyers;
+    std::unique_ptr<DragGather> m_gather;
     std::vector<std::shared_ptr<RImage>> m_dragImages; // Back to front (the grabbed one last)
-    SkPoint m_dndPointer {};  // Latest pointer position over this surface while dragging
     SkIPoint m_grabInIcon {}; // Pointer position within the grabbed icon
-    CZLinearAnimation m_gather;
     std::vector<std::string> m_dragKeys;
     std::string m_dragGrabKey;
     SkPoint m_dragOffset {}; // Pointer position within the grabbed item's cell

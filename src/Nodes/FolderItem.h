@@ -21,6 +21,7 @@ class FolderItem final : public AKContainer
 {
 public:
     FolderItem(const DeskEntry &entry = {}, AKNode *parent = nullptr) noexcept;
+    ~FolderItem() noexcept;
 
     /// Size of its cell in the window's grid (every item has it).
     static SkSize CellSize() noexcept;
@@ -34,6 +35,15 @@ public:
     void setSelected(bool selected) noexcept;
     bool selected() const noexcept { return m_selected; }
 
+    /// Faded while it's dragged.
+    void setDimmed(bool dimmed) noexcept;
+
+    /// Highlighted (like selected) while files dragged over it would drop into it.
+    void setDropTarget(bool target) noexcept;
+
+    /// Whether files can be dropped into it (a folder or a disk).
+    bool acceptsDrops() const noexcept { return isFolder(); }
+
     /// Whether it's a folder (or a disk): opened in the window itself.
     bool isFolder() const noexcept;
 
@@ -42,6 +52,9 @@ public:
 
     /// Whether @p pos (surface coordinates) is over its icon or the text of its name.
     bool contains(const SkPoint &pos) const noexcept;
+
+    /// Whether @p pos (surface coordinates) is over the text of its name.
+    bool nameContains(const SkPoint &pos) const noexcept;
 
     AKRoundSolidColor iconBox { 0x00000000, CZBorderRadius::Make(6), this };
     IconView icon { &iconBox, Assets::WindowShadow };
@@ -53,8 +66,10 @@ protected:
 private:
     void updateImage() noexcept;
     void updateSelectionColor() noexcept;
+    void cancelThumbnail() noexcept;
     DeskEntry m_entry;
-    bool m_selected { false };
+    std::filesystem::path m_waitingThumbnail; // Requested, not ready yet (see Assets::thumbnail())
+    bool m_selected { false }, m_dropTarget { false };
 };
 
 #endif // FOLDERITEM_H

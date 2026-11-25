@@ -28,10 +28,7 @@
 namespace fs = std::filesystem;
 
 Background::Background(MScreen &screen) noexcept :
-    MLayerSurface(),
-    m_gather(DESK_DRAG_GATHER_MS,
-        [this](CZAnimation *a){ gatherStep(a->value()); },
-        [this](CZAnimation *){ gatherFinished(); })
+    MLayerSurface()
 {
     screen.userData = this;
     setScreen(&screen);
@@ -438,7 +435,11 @@ void Background::startRename(DeskItem &target) noexcept
     m_renameTimer.stop();
     m_renameCandidate.clear();
     selectOnly(&target);
-    renameField.begin(target, labelBoxAt(target));
+    // The label hidden meanwhile (the item may be gone when it ends)
+    renameField.begin(target.entry(), labelBoxAt(target), [item = CZWeak<DeskItem>(&target)](bool editing){
+        if (item)
+            item->label.setOpacity(editing ? 0.f : 1.f);
+    });
 }
 
 void Background::openSelection() noexcept
@@ -505,6 +506,18 @@ void Background::animateOpening(DeskItem &item) noexcept
     CZLinearAnimation::OneShot(DESK_OPEN_ZOOM_MS,
         [step](CZAnimation *a){ step(a->value()); },
         [node](CZAnimation*){ node->setVisible(false); });
+}
+
+void Background::copySelection(bool cut) noexcept
+{
+    std::vector<std::filesystem::path> files;
+
+    for (const DeskEntry *e : selectedEntries())
+        if (e->kind == DeskEntry::Kind::File)
+            files.emplace_back(e->path);
+
+    GetDesk()->copyFiles(files, cut);
+    GetDesk()->selectionChanged(); // Paste enabled in the menus
 }
 
 void Background::trashSelection() noexcept
@@ -746,33 +759,11 @@ void Background::startDrag(DeskItem &grabbed) noexcept
         m_dnd->onCancelled.subscribe(this, [this]{ endDrag(); });
 
         // Other apps (file managers, editors...) get the files as URIs.
-        m_dnd->onSend = [this](const std::string &mimeType, Int32 fd){
+        m_dnd->onSend = [](const std::string &mimeType, Int32 fd){
             if (mimeType != "text/uri-list")
                 return;
 
-            std::string uris;
-
-            for (const auto &key : m_dragKeys)
-                if (const DeskEntry *entry { GetDesk()->entry(key) })
-                {
-                    std::string encoded;
-                    static constexpr char hex[] { "0123456789ABCDEF" };
-
-                    for (const unsigned char c : entry->path.string())
-                    {
-                        if (std::isalnum(c) || std::strchr("/-._~", c))
-                            encoded += char(c);
-                        else
-                        {
-                            encoded += '%';
-                            encoded += hex[c >> 4];
-                            encoded += hex[c & 0xF];
-                        }
-                    }
-
-                    uris += "file://" + encoded + "\r\n";
-                }
-
+            const std::string uris { Desk::URIList(GetDesk()->dragFiles()) };
             [[maybe_unused]] const auto written { write(fd, uris.data(), uris.size()) };
         };
     }
@@ -794,8 +785,8 @@ void Background::startDrag(DeskItem &grabbed) noexcept
 
     m_dndItem.reset();
     m_dndStack.reset();
-    m_gather.pause();
-    m_flyers.clear();
+    m_gather.reset();
+    std::vector<DragGather::Flight> flights; // Surface coordinates until the drag starts
 
     if (m_dragKeys.size() == 1)
     {
@@ -814,44 +805,43 @@ void Background::startDrag(DeskItem &grabbed) noexcept
     }
     else
     {
-        // Several: the drag starts with the grabbed icon alone while copies of the others fly to the
-        // pointer (gatherStep()); then it becomes the whole stack with a count (gatherFinished()).
+        // Several: the drag starts with the grabbed icon alone while the others fly to the pointer
+        // (DragGather); then it becomes the whole stack with a count (gatherFinished()).
         const SkIRect iconRect { iconRectAt(grabbed.cell) };
         m_grabInIcon = {
             std::clamp(Int32(m_pressPos.x()) - iconRect.x() - DESK_ICON_PADDING, 0, m_iconSize),
             std::clamp(Int32(m_pressPos.y()) - iconRect.y() - DESK_ICON_PADDING, 0, m_iconSize) };
 
-        m_dragImages.clear();
+        // The grabbed one in front and the others behind it, the farther the deeper: they all fly
+        // (every icon of the desktop is in view). The stack shows the front-most
+        // DESK_DRAG_STACK_MAX, the count says how many.
+        std::vector<DeskItem*> others;
 
         for (const auto &key : m_dragKeys)
+            if (DeskItem *i { item(key) }; i && i != &grabbed)
+                others.emplace_back(i);
+
+        const auto distance = [&grabbed](const DeskItem *i){
+            const Int32 dx { i->cell.x() - grabbed.cell.x() }, dy { i->cell.y() - grabbed.cell.y() };
+            return dx * dx + dy * dy;
+        };
+
+        std::stable_sort(others.begin(), others.end(), [&](DeskItem *a, DeskItem *b){ return distance(a) < distance(b); });
+
+        std::reverse(others.begin(), others.end()); // Back to front
+        m_dragImages.clear();
+
+        for (DeskItem *i : others)
         {
-            DeskItem *i { item(key) };
-
-            if (!i || i == &grabbed)
-                continue;
-
             m_dragImages.emplace_back(i->icon.image());
-
             const SkIRect rect { iconRectAt(i->cell) };
-            // Its layer once stacked: the others are back to front in m_dragImages order, the
-            // grabbed one (not flying, it's the drag icon) in front.
-            const Int32 depth { DragStack::LayerDepth(m_dragImages.size() - 1, m_dragKeys.size()) };
-            auto flyer { std::make_unique<Flyer>(this, SkPoint::Make(rect.x() + DESK_ICON_PADDING, rect.y() + DESK_ICON_PADDING), depth) };
-            flyer->view.setImage(i->icon.image());
-            flyer->view.layout().setWidth(m_iconSize);
-            flyer->view.layout().setHeight(m_iconSize);
-            flyer->box.layout().setPositionType(YGPositionTypeAbsolute);
-            flyer->box.layout().setWidth(m_iconSize);
-            flyer->box.layout().setHeight(m_iconSize);
-            flyer->box.layout().setPosition(YGEdgeLeft, flyer->from.x());
-            flyer->box.layout().setPosition(YGEdgeTop, flyer->from.y());
-            m_flyers.emplace_back(std::move(flyer));
+            const Int32 depth { DragStack::LayerDepth(m_dragImages.size() - 1, others.size() + 1) };
+            flights.push_back({ i->icon.image(), SkRect::MakeXYWH(rect.x() + DESK_ICON_PADDING, rect.y() + DESK_ICON_PADDING, m_iconSize, m_iconSize), depth });
         }
 
         m_dragImages.emplace_back(grabbed.icon.image()); // In front
         m_dndStack = std::make_unique<DragStack>(m_iconSize, m_dnd.get());
         setDragImage({ grabbed.icon.image() }, 1);
-        m_dndPointer = m_pressPos;
     }
 
     if (!m_dnd->start(*this, *m_press, { DESK_ITEMS_MIME_TYPE, "text/uri-list" },
@@ -867,8 +857,27 @@ void Background::startDrag(DeskItem &grabbed) noexcept
 
     GetDesk()->setDragSource(this);
 
-    if (!m_flyers.empty())
-        m_gather.reset();
+    // The files (disks can't be moved into folders), for drops in Desk's windows and other apps
+    std::vector<std::filesystem::path> files;
+
+    for (const auto &key : m_dragKeys)
+        if (const DeskEntry *e { GetDesk()->entry(key) }; e && e->kind == DeskEntry::Kind::File)
+            files.emplace_back(e->path);
+
+    GetDesk()->setDragFiles(std::move(files));
+
+    // The flights relative to the drag icon (under the pointer, at its hotspot)
+    if (!flights.empty() && m_dndStack)
+    {
+        const SkPoint pointer { AKApp::Get()->pointer().pos() };
+        const SkPoint icon { pointer.x() - m_dnd->hotspot().x(), pointer.y() - m_dnd->hotspot().y() };
+
+        for (auto &flight : flights)
+            flight.from.offset(-icon.x(), -icon.y());
+
+        m_gather = std::make_unique<DragGather>(*m_dnd, SkPoint::Make(m_dndStack->frontOrigin().x(), m_dndStack->frontOrigin().y()),
+            m_iconSize, Assets::DesktopShadow, std::move(flights), [this]{ gatherFinished(); });
+    }
 }
 
 void Background::setDragImage(const std::vector<std::shared_ptr<RImage>> &images, UInt32 count) noexcept
@@ -884,26 +893,9 @@ void Background::setDragImage(const std::vector<std::shared_ptr<RImage>> &images
     m_dnd->setHotspot(SkIPoint::Make(front.x() + m_grabInIcon.x(), front.y() + m_grabInIcon.y()));
 }
 
-void Background::gatherStep(Float64 progress) noexcept
-{
-    // Each one towards its layer of the stack that will be dragged: the front icon is under the
-    // pointer where it was grabbed, the ones behind move right and up by a step per layer.
-    const SkPoint front { m_dndPointer.x() - m_grabInIcon.x(), m_dndPointer.y() - m_grabInIcon.y() };
-    const Int32 step { DragStack::LayerStep(m_iconSize) };
-    const SkScalar t { SkScalar(CZEase::OutCubic(progress)) };
-
-    for (auto &flyer : m_flyers)
-    {
-        const SkPoint target { front.x() + flyer->depth * step, front.y() - flyer->depth * step };
-        flyer->box.layout().setPosition(YGEdgeLeft, flyer->from.x() + (target.x() - flyer->from.x()) * t);
-        flyer->box.layout().setPosition(YGEdgeTop, flyer->from.y() + (target.y() - flyer->from.y()) * t);
-    }
-}
-
 void Background::gatherFinished() noexcept
 {
-    m_flyers.clear();
-
+    // The flyers just landed (hidden): the stack takes their place
     if (m_dnd && m_dnd->dragging() && m_dndStack)
         setDragImage(m_dragImages, UInt32(m_dragKeys.size()));
 }
@@ -911,9 +903,6 @@ void Background::gatherFinished() noexcept
 void Background::dragOver(MDNDOffer &offer, const SkPoint &pos) noexcept
 {
     Background *source { GetDesk()->dragSource() };
-
-    if (source == this)
-        m_dndPointer = pos; // The flying icons follow it (see gatherStep())
 
     // Over a folder or disk: files go into it (Desk's own icons or any file, e.g. from a file
     // manager). Moved by default, copied to other disks.
@@ -955,7 +944,7 @@ void Background::dropped(MDNDOffer &offer, const SkPoint &pos) noexcept
     if (DeskItem *target { dropTargetAt(offer, pos) })
     {
         setDropTarget(nullptr);
-        droppedInto(target->entry().path, target->entry().kind == DeskEntry::Kind::Volume, offer);
+        GetDesk()->dropInto(target->entry().path, target->entry().kind == DeskEntry::Kind::Volume, offer);
         return;
     }
 
@@ -966,7 +955,7 @@ void Background::dropped(MDNDOffer &offer, const SkPoint &pos) noexcept
     if (m_showsIcons && HasForeignFiles(offer))
     {
         auto *desk { GetDesk() };
-        const auto files { droppedInto(desk->desktopDir(), false, offer) };
+        const auto files { desk->dropInto(desk->desktopDir(), false, offer) };
 
         if (desk->settings.sortBy == Settings::SortBy::Custom && !files.empty())
         {
@@ -1093,148 +1082,17 @@ void Background::setDropTarget(DeskItem *target) noexcept
         target->setDropTarget(true);
 }
 
-// Decodes a file:// URI into a path ("" if it's not a local file).
-static std::filesystem::path PathFromURI(std::string uri) noexcept
-{
-    while (!uri.empty() && (uri.back() == '\r' || uri.back() == ' '))
-        uri.pop_back();
-
-    std::string_view rest { uri };
-
-    if (rest.starts_with("file://"))
-        rest.remove_prefix(7);
-    else
-        return {};
-
-    // file://host/path: only local ones.
-    if (!rest.starts_with('/'))
-    {
-        const size_t slash { rest.find('/') };
-
-        if (slash == std::string_view::npos || rest.substr(0, slash) != "localhost")
-            return {};
-
-        rest.remove_prefix(slash);
-    }
-
-    std::string path;
-
-    for (size_t i = 0; i < rest.size(); i++)
-    {
-        if (rest[i] == '%' && i + 2 < rest.size())
-        {
-            const auto hex = [](char c) -> int {
-                return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
-            };
-            const int hi { hex(rest[i + 1]) }, lo { hex(rest[i + 2]) };
-
-            if (hi >= 0 && lo >= 0)
-            {
-                path += char(hi * 16 + lo);
-                i += 2;
-                continue;
-            }
-        }
-
-        path += rest[i];
-    }
-
-    return path;
-}
-
-// Reads all of @p fd (another process writes it), giving up after @p timeoutMs.
-static std::string ReadAll(Int32 fd, Int32 timeoutMs) noexcept
-{
-    std::string data;
-    const auto deadline { std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs) };
-    char buf[4096];
-
-    while (true)
-    {
-        const auto left { std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count() };
-
-        if (left <= 0)
-        {
-            Log(CZWarning, CZLN, "Timed out reading the dropped files");
-            break;
-        }
-
-        pollfd pfd { fd, POLLIN, 0 };
-
-        if (poll(&pfd, 1, Int32(left)) <= 0)
-            continue;
-
-        const ssize_t n { read(fd, buf, sizeof(buf)) };
-
-        if (n > 0)
-            data.append(buf, size_t(n));
-        else if (n == 0 || errno != EINTR)
-            break;
-    }
-
-    return data;
-}
-
-std::vector<std::filesystem::path> Background::droppedInto(const std::filesystem::path &dir, bool copyByDefault, MDNDOffer &offer) noexcept
-{
-    Background *source { GetDesk()->dragSource() };
-    std::vector<std::filesystem::path> files;
-
-    if (source && !source->m_dragKeys.empty() && offer.hasMimeType(DESK_ITEMS_MIME_TYPE))
-    {
-        // Desk's own icons: the files are known (and Desk itself is the source, so reading its data
-        // here would wait for ourselves). Disks can't be moved into folders.
-        for (const auto &key : source->m_dragKeys)
-            if (const DeskEntry *e { GetDesk()->entry(key) }; e && e->kind == DeskEntry::Kind::File)
-                files.emplace_back(e->path);
-
-        if (const Int32 fd { offer.receive(DESK_ITEMS_MIME_TYPE) }; fd >= 0)
-            close(fd);
-    }
-    else if (const Int32 fd { offer.receive("text/uri-list") }; fd >= 0)
-    {
-        // Another app: a list of URIs, one per line ('#' lines are comments). Small, written right
-        // away by the source; a short timeout in case it never does.
-        const std::string list { ReadAll(fd, 1000) };
-        close(fd);
-
-        size_t start { 0 };
-
-        while (start < list.size())
-        {
-            size_t end { list.find('\n', start) };
-
-            if (end == std::string::npos)
-                end = list.size();
-
-            const std::string line { list.substr(start, end - start) };
-            start = end + 1;
-
-            if (line.empty() || line.front() == '#')
-                continue;
-
-            if (auto path { PathFromURI(line) }; !path.empty())
-                files.emplace_back(std::move(path));
-        }
-    }
-
-    // The action chosen by the compositor (e.g. a modifier held), else the target's default.
-    const bool copy { offer.action() == MDNDOffer::Copy || (offer.action() != MDNDOffer::Move && copyByDefault) };
-    offer.finish();
-
-    GetDesk()->transfer(files, dir, copy);
-    return files;
-}
-
 void Background::endDrag() noexcept
 {
     setDropTarget(nullptr);
 
     if (GetDesk()->dragSource() == this)
+    {
         GetDesk()->setDragSource(nullptr);
+        GetDesk()->setDragFiles({});
+    }
 
-    m_gather.pause();
-    m_flyers.clear();
+    m_gather.reset();
 
     for (const auto &key : m_dragKeys)
         if (DeskItem *i { item(key) })
@@ -1294,6 +1152,13 @@ void Background::openItemsMenu(const CZPointerButtonEvent &event) noexcept
 
         const bool hasFiles { std::any_of(entries.begin(), entries.end(), [](const DeskEntry *e){ return e->kind == DeskEntry::Kind::File; }) };
 
+        if (hasFiles)
+        {
+            menu.addAction("Cut", [this]{ copySelection(true); });
+            menu.addAction("Copy", [this]{ copySelection(false); });
+            menu.addDivider();
+        }
+
         if (single && first->kind == DeskEntry::Kind::File && !first->launcher)
             menu.addAction("Rename", [this, key = first->key]{
                 if (DeskItem *target { item(key) })
@@ -1325,6 +1190,7 @@ void Background::openDesktopMenu(const CZPointerButtonEvent &event) noexcept
         if (m_showsIcons)
         {
             menu.addAction("New Folder", [this]{ newFolder(); });
+            menu.addAction("Paste", []{ GetDesk()->pasteInto(GetDesk()->desktopDir()); }, desk->canPaste());
             menu.addDivider();
         }
 

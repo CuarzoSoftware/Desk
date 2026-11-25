@@ -5,6 +5,8 @@
 #include <CZ/skia/core/SkPoint.h>
 #include <filesystem>
 #include <map>
+#include <vector>
+#include <optional>
 #include <string>
 
 /**
@@ -24,12 +26,23 @@
  * Size=64
  * SortBy=Custom
  *
+ * [Windows]
+ * View=Grid
+ * NameOffset=-420
+ * DateWidth=180
+ * SizeWidth=84
+ * KindWidth=150
+ *
+ * [Favorites]
+ * 0=/home/user
+ * 1=/home/user/Projects
+ *
  * [Positions]
  * Notes.txt=0,2
  * @endcode
  *
  * `Picture` is a copy of the chosen one (see StorePicture()). `Fit` is `Cover` (fills the screen, cropping), `Contain` (whole picture, the color around it) or
- * `Fill` (stretched). `SortBy` is `Custom` (the positions below), `Name`, `Kind` or `Size`.
+ * `Fill` (stretched). `SortBy` is `Custom` (the positions below), `Name`, `Kind` or `Size`. `View` is how folder windows show the files: `Grid` or `List`, and the `*Width` keys the widths of the list's columns.
  * Positions are grid cells, columns counted from the right edge. Their keys are percent-encoded
  * item keys (see DeskEntry::key).
  */
@@ -58,6 +71,25 @@ public:
     Int32 iconSize { DESK_ICON_SIZE_DEFAULT };
 
     SortBy sortBy { SortBy::Custom };
+
+    /// How folder windows show the files: icons (a grid) or a list. The last one chosen.
+    bool listView { false };
+
+    /**
+     * @brief The list view's columns (resized from its header), shared by every window.
+     *
+     * Date, Size and Kind keep their width (points). The name's follows the window: chosen
+     * (resized), it grows or shrinks by as much as the list's visible width does. Saved as its
+     * difference from that width (listNameOffset: name = width + offset, at least
+     * DESK_LIST_NAME_MIN); none (the default) fills the room the others leave (see FolderWindow).
+     * listColumns.name itself isn't saved.
+     */
+    DeskListColumns listColumns;
+    std::optional<Int32> listNameOffset;
+
+    /// The folders in the Favorites of the folder windows' sidebars, in order (see Desk::favorites()).
+    /// None saved yet: the defaults (home and the user folders).
+    std::optional<std::vector<std::filesystem::path>> favorites;
 
     /// Grid cell of each item placed by the user (column from the right, row from the top).
     std::map<std::string, SkIPoint> positions;

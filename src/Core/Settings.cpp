@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <charconv>
 #include <fstream>
 #include <pwd.h>
 #include <unistd.h>
@@ -136,6 +137,36 @@ void Settings::load() noexcept
     if (auto v { value("Icons", "SortBy") })
         sortBy = *v == "Name" ? SortBy::Name : *v == "Kind" ? SortBy::Kind : *v == "Size" ? SortBy::Size : SortBy::Custom;
 
+    if (auto v { value("Windows", "View") })
+        listView = *v == "List";
+
+    if (auto v { value("Windows", "NameOffset") })
+        if (Int32 offset { 0 }; std::from_chars(v->data(), v->data() + v->size(), offset).ec == std::errc())
+            listNameOffset = std::clamp(offset, -100000, 100000);
+
+    for (const auto &[key, width] : { std::pair { "DateWidth", &listColumns.date },
+                                      std::pair { "SizeWidth", &listColumns.size },
+                                      std::pair { "KindWidth", &listColumns.kind } })
+        if (auto v { value("Windows", key) })
+            if (const int w { std::atoi(v->c_str()) }; w > 0)
+                *width = std::clamp(w, DESK_LIST_COLUMN_MIN, 4000);
+
+    // Numbered in order (the keys are sorted as text: "10" before "2")
+    if (auto g { ini->find("Favorites") }; g != ini->end())
+    {
+        std::vector<std::pair<int, fs::path>> numbered;
+
+        for (const auto &[key, dir] : g->second)
+            if (int n { 0 }; std::from_chars(key.data(), key.data() + key.size(), n).ec == std::errc() && !dir.empty())
+                numbered.emplace_back(n, dir);
+
+        std::sort(numbered.begin(), numbered.end(), [](const auto &a, const auto &b){ return a.first < b.first; });
+        favorites.emplace();
+
+        for (auto &[n, dir] : numbered)
+            favorites->emplace_back(std::move(dir));
+    }
+
     if (auto g { ini->find("Positions") }; g != ini->end())
     {
         for (const auto &[key, cell] : g->second)
@@ -175,6 +206,22 @@ void Settings::save() noexcept
         out << "Color=" << hex << "\n\n";
         out << "[Icons]\nSize=" << iconSize << '\n';
         out << "SortBy=" << (sortBy == SortBy::Name ? "Name" : sortBy == SortBy::Kind ? "Kind" : sortBy == SortBy::Size ? "Size" : "Custom") << "\n\n";
+        out << "[Windows]\nView=" << (listView ? "List" : "Grid") << '\n';
+        if (listNameOffset)
+            out << "NameOffset=" << *listNameOffset << '\n';
+        out << "DateWidth=" << listColumns.date << '\n';
+        out << "SizeWidth=" << listColumns.size << '\n';
+        out << "KindWidth=" << listColumns.kind << "\n\n";
+        if (favorites)
+        {
+            out << "[Favorites]\n";
+
+            for (size_t i = 0; i < favorites->size(); i++)
+                out << i << '=' << (*favorites)[i].string() << '\n';
+
+            out << '\n';
+        }
+
         out << "[Positions]\n";
 
         for (const auto &[key, cell] : positions)

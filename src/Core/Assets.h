@@ -72,9 +72,15 @@ public:
      * @brief The thumbnail of a picture, fitting @p maxSize pixels.
      *
      * Returns nullptr while it isn't ready: it's then queued and decoded in the background of the
-     * event loop (one per iteration), and onThumbnailReady is emitted with its path.
+     * event loop (one per iteration), and onThumbnailReady is emitted with its path. The latest
+     * requests are decoded first (e.g. what scrolled into view). Each request counts until
+     * cancelThumbnail(): a picture nobody waits for anymore isn't decoded.
      */
     std::shared_ptr<RImage> thumbnail(const std::filesystem::path &path, Int32 maxSize) noexcept;
+
+    /// A request of thumbnail() not needed anymore (e.g. its cell scrolled out of view and shows
+    /// another file). Decoded anyway if others still wait for it.
+    void cancelThumbnail(const std::filesystem::path &path) noexcept;
 
     /// Drops thumbnails of files that changed or no longer exist.
     void pruneThumbnails() noexcept;
@@ -112,7 +118,13 @@ private:
     };
 
     std::unordered_map<std::string, Thumbnail> m_thumbnails; // By path
-    std::deque<std::pair<std::filesystem::path, Int32>> m_thumbnailQueue;
+    struct ThumbnailRequest
+    {
+        std::filesystem::path path;
+        Int32 maxSize;
+        UInt32 waiting; // Requests not cancelled (see cancelThumbnail())
+    };
+    std::deque<ThumbnailRequest> m_thumbnailQueue; // The latest at the back (decoded first)
     std::unique_ptr<CZTimer> m_thumbnailTimer; // Created by init() (timers need the CZCore)
 
     struct Picture

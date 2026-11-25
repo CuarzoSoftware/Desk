@@ -37,6 +37,14 @@ SelectionBox::SelectionBox(AKNode *parent) noexcept : AKContainer(YGFlexDirectio
     m_right.layout().setWidth(1.f);
 }
 
+void SelectionBox::setWindowColors() noexcept
+{
+    m_fill.setColor(DESK_WINDOW_RUBBER_FILL);
+
+    for (AKSolidColor *edge : { &m_top, &m_bottom, &m_left, &m_right })
+        edge->setColor(DESK_WINDOW_RUBBER_BORDER);
+}
+
 void SelectionBox::setRect(const SkIRect &rect) noexcept
 {
     setVisible(!rect.isEmpty());

@@ -55,6 +55,8 @@ constexpr size_t  DESK_DRAG_STACK_MAX   { 5 };          // Icons shown stacked w
 constexpr UInt32  DESK_DRAG_GATHER_MS   { 300 };        // Icons flying to the pointer
 constexpr SkColor DESK_RUBBER_FILL      { 0x33FFFFFF }; // Rubber band selection
 constexpr SkColor DESK_RUBBER_BORDER    { 0x99FFFFFF };
+constexpr CZAdaptiveColor DESK_WINDOW_RUBBER_FILL   { 0x26000000, 0x29FFFFFF }; // In folder windows (over their background)
+constexpr CZAdaptiveColor DESK_WINDOW_RUBBER_BORDER { 0x8C000000, 0x8CFFFFFF };
 
 // --- Folder windows ------------------------------------------------------------------------
 
@@ -68,6 +70,22 @@ constexpr Int32 DESK_WINDOW_CELL_WIDTH  { 104 };
 constexpr Int32 DESK_WINDOW_GRID_PADDING { 14 }; // Around the grid
 constexpr Int32 DESK_WINDOW_GRID_GAP    { 6 };   // Between rows
 constexpr Int32 DESK_WINDOW_LABEL_FONT_SIZE { 12 };
+// List view (see FolderListRow): the columns after the name, and the row content
+constexpr Int32 DESK_LIST_DATE_WIDTH    { 180 };
+constexpr Int32 DESK_LIST_SIZE_WIDTH    { 84 };
+constexpr Int32 DESK_LIST_KIND_WIDTH    { 150 };
+constexpr Int32 DESK_LIST_COLUMN_MIN    { 50 };  // Narrowest a column can be resized to (see FolderListHeader)
+constexpr Int32 DESK_LIST_NAME_WIDTH    { 280 }; // Width of the name column (its icon included) until the window's is known
+constexpr Int32 DESK_LIST_NAME_MIN      { 120 }; // Narrowest the name column can be resized to
+constexpr Int32 DESK_LIST_GAP           { 6 };   // Between columns
+constexpr Int32 DESK_LIST_TEXT_INSET    { 8 };   // Text of the columns after the name, from their left edge (after the header's divider)
+constexpr Int32 DESK_LIST_ICON_SIZE     { 16 };
+constexpr Int32 DESK_LIST_PADDING       { 10 };  // Inside a row, left and right
+constexpr Int32 DESK_LIST_ROW_HEIGHT    { 24 };
+constexpr Int32 DESK_LIST_HEADER_HEIGHT { 26 };
+constexpr Int32 DESK_LIST_FONT_SIZE     { 13 };
+constexpr Int32 DESK_WINDOW_LIST_INSET  { 8 };   // The list's content padding (rows inset from the edges)
+
 // Icons in windows: a faint shadow (over a plain background, not a picture), at DESK_WINDOW_ICON_SIZE
 constexpr SkColor  DESK_WINDOW_ICON_SHADOW_COLOR    { 0x40000000 };
 constexpr SkScalar DESK_WINDOW_ICON_SHADOW_RADIUS   { 6.f };
@@ -80,10 +98,28 @@ constexpr UInt32  DESK_DOUBLE_CLICK_MS  { 400 };
 constexpr UInt32  DESK_OPEN_ZOOM_MS     { 200 };   // An opened item's icon growing in place, fading out
 constexpr float   DESK_OPEN_ZOOM_SCALE  { 4.5f };  // How much larger it gets
 constexpr Float32 DESK_DRAG_THRESHOLD   { 4.f };
+constexpr Int32   DESK_LIST_DRAG_HOTSPOT { 6 };     // Dragged from a list: the pointer this far into the drag icon's top-left corner
+constexpr Float32 DESK_AUTOSCROLL_EDGE  { 16.f };   // A rubber band near a window's view edge (or past it) scrolls it
+constexpr Float32 DESK_AUTOSCROLL_SPEED { 10.f };   // Points per second for each point into that zone
+constexpr Float32 DESK_AUTOSCROLL_MAX   { 2400.f }; // Points per second, at most
 constexpr UInt32  DESK_RESCAN_DELAY_MS  { 150 };  // Coalesces bursts of file system events
+constexpr UInt32  DESK_STALE_VIEW_MS    { 300 };  // Longest a folder window keeps showing the previous folder while reading the new one
 constexpr Int32   DESK_THUMBNAIL_MAX_MB { 64 };   // Bigger pictures get the generic image icon
 constexpr Int32   DESK_ICON_LOAD_SIZE   { 256 };  // Themed icons are loaded at this size
 #define DESK_ICON_THEME "WhiteSur-light"
 #define DESK_ITEMS_MIME_TYPE "application/x-cz-desk-items"
+#define DESK_FILES_MIME_TYPE "application/x-cz-desk-files" // Dragged from a folder window (see Desk::dragFiles())
+#define DESK_FAVORITE_MIME_TYPE "application/x-cz-desk-favorite" // A sidebar favorite being reordered (see FolderSidebar)
+
+/// Widths of the list view's columns (the name's includes its icon), see FolderListHeader.
+struct DeskListColumns
+{
+    Int32 name { DESK_LIST_NAME_WIDTH };
+    Int32 date { DESK_LIST_DATE_WIDTH };
+    Int32 size { DESK_LIST_SIZE_WIDTH };
+    Int32 kind { DESK_LIST_KIND_WIDTH };
+
+    bool operator==(const DeskListColumns &) const = default;
+};
 
 #endif // TYPES_H

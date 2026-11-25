@@ -12,6 +12,7 @@
 #include <CZ/Core/CZTimer.h>
 #include <CZ/Core/CZWeak.h>
 #include <filesystem>
+#include <ctime>
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
@@ -20,6 +21,7 @@
 
 namespace CZ { class CZEventSource; class CZBus; }
 class Background;
+namespace CZ { class MDNDOffer; }
 class MenuBar;
 class FolderWindow;
 class FolderScanner;
@@ -49,6 +51,7 @@ struct DeskEntry
     bool usb { false };          ///< Connected through USB
 
     UInt64 size { 0 };           ///< Bytes (regular files)
+    std::time_t modified { 0 };  ///< Last modification (0: unknown)
     std::string kindName;        ///< e.g. "PNG image" (sorting by kind)
 
     /// Launchers (.desktop files of type Application): shown with their own name and icon.
@@ -89,9 +92,52 @@ public:
     /// Makes @p background the one used last (the selection on the others is cleared).
     void setActiveBackground(Background *background) noexcept;
 
+    /// A folder window isn't active anymore: the desktop's menus are shown again unless another is.
+    void windowDeactivated() noexcept;
+
     /// The desktop an icon drag started from (nullptr when not dragging).
     Background *dragSource() const noexcept;
     void setDragSource(Background *background) noexcept;
+
+    /**
+     * @brief The files dragged from a desktop or a folder window (empty when not dragging).
+     *
+     * Drops of Desk's own drags (DESK_ITEMS_MIME_TYPE, DESK_FILES_MIME_TYPE) take them from here:
+     * reading the offer's data would wait for Desk itself (see dropInto()).
+     */
+    const std::vector<std::filesystem::path> &dragFiles() const noexcept { return m_dragFiles; }
+    void setDragFiles(std::vector<std::filesystem::path> files) noexcept { m_dragFiles = std::move(files); }
+
+    /// Whether a drag offers files to drop into a folder: from other apps, or Desk's own.
+    bool offersFiles(CZ::MDNDOffer &offer) const noexcept;
+
+    /**
+     * @brief Completes a drop of files into the folder @p dir (see transfer()): moved, or copied if
+     *        the user chose it (or @p copyByDefault and no action was chosen). Returns the files.
+     */
+    std::vector<std::filesystem::path> dropInto(const std::filesystem::path &dir, bool copyByDefault, CZ::MDNDOffer &offer) noexcept;
+
+    /// The files of a drop (Desk's own or another app's), completing it without moving them (e.g.
+    /// folders added to the favorites).
+    std::vector<std::filesystem::path> receiveDrop(CZ::MDNDOffer &offer) noexcept;
+
+    /* Favorites (the folder windows' sidebars) */
+
+    /// The favorite folders, in order: the saved ones (see Settings::favorites), else the defaults
+    /// (home, Desktop, /usr/share/applications and the user folders that exist).
+    std::vector<std::filesystem::path> favorites() const noexcept;
+
+    /// Places the folders @p dirs at @p index of the favorites (those already there move), saved.
+    void placeFavorites(const std::vector<std::filesystem::path> &dirs, size_t index) noexcept;
+
+    /// Removes the folder @p dir from the favorites, saved.
+    void removeFavorite(const std::filesystem::path &dir) noexcept;
+
+    /// Emitted after the favorites change (see placeFavorites()).
+    CZSignal<> onFavoritesChanged;
+
+    /// "file://..." lines (text/uri-list) for @p files, percent-encoded.
+    static std::string URIList(const std::vector<std::filesystem::path> &files) noexcept;
 
     /// An XDG user directory (user-dirs.dirs key without the XDG_/_DIR, e.g. "DOCUMENTS"), or
     /// ~/@p fallback.
@@ -170,6 +216,10 @@ public:
     /// Opens a file with a specific app.
     void openWith(const DeskEntry &entry, const XDGDesktopEntry &app) noexcept;
 
+    /// Tells Crystals the user launched @p app (AppLaunched on org.cuarzo.Desk): its first window
+    /// is shown wherever it opens, like apps launched from the dock.
+    void announceLaunch(const XDGDesktopEntry &app) noexcept;
+
     /// Apps that can open @p entry, the default one first.
     std::vector<std::shared_ptr<const XDGDesktopEntry>> appsFor(const DeskEntry &entry) noexcept;
 
@@ -185,6 +235,22 @@ public:
      */
     void transfer(const std::vector<std::filesystem::path> &files, const std::filesystem::path &dir, bool copy) noexcept;
 
+    /* Clipboard (files, like other file managers: see copyFiles()) */
+
+    /**
+     * @brief Puts @p files on the clipboard: copied (or moved if @p cut) where they're pasted.
+     *
+     * As "x-special/gnome-copied-files" (what file managers use), "text/uri-list" and their paths
+     * as text. Uses the latest input event of the app (the clipboard needs one).
+     */
+    void copyFiles(const std::vector<std::filesystem::path> &files, bool cut) noexcept;
+
+    /// Whether the clipboard has files (copied here or in another file manager).
+    bool canPaste() const noexcept;
+
+    /// The clipboard's files into the folder @p dir: copied, or moved if they were cut (see transfer()).
+    void pasteInto(const std::filesystem::path &dir) noexcept;
+
     /// Unmounts a volume and powers its drive off.
     void eject(const DeskEntry &volume) noexcept;
 
@@ -195,7 +261,7 @@ public:
     std::string newFolder(const std::filesystem::path &dir) noexcept;
 
     /**
-     * @brief Renames a file or folder of the desktop (keeping its place in the grid).
+     * @brief Renames a file or folder (a desktop one keeps its place in the grid).
      *
      * Fails (logged) for volumes, invalid names (empty, ".", "..", with "/") and names already
      * taken. Returns its new key, or an empty string on failure.
@@ -215,11 +281,20 @@ public:
     /// Runs a command (argv) detached.
     static bool Spawn(const std::vector<std::string> &argv) noexcept;
 
+    /// E.g. "1.2 GB" (decimal units, like Finder).
+    static std::string FormatBytes(UInt64 bytes) noexcept;
+
+    /// E.g. "Today at 10:32", "Yesterday at 18:05", "3 Nov 2026 at 09:14" (like Finder's lists).
+    static std::string FormatDate(std::time_t time) noexcept;
+
     /// Emitted after entries() change (files added/removed/renamed, disks mounted/unmounted).
     CZSignal<> onEntriesChanged;
 
     /// Emitted after the background settings change.
     CZSignal<> onBackgroundChanged;
+
+    /// Emitted while the list view's columns are resized (see Settings::listColumns), in any window.
+    CZSignal<> onListColumnsChanged;
 
     /// Emitted after the icon size or the positions change from outside (settings file edited).
     CZSignal<> onIconsChanged;
@@ -229,6 +304,7 @@ private:
     void onScreenUnplugged(MScreen &screen) noexcept;
     // Backgrounds, held through their base class (Background needs this header).
     CZWeak<MLayerSurface> m_activeBackground, m_dragSource;
+    std::vector<std::filesystem::path> m_dragFiles;
 
     void initBus() noexcept;
     void initDesktopDir() noexcept;
@@ -257,6 +333,7 @@ private:
     // Closed windows are destroyed later (not from their own handlers)
     std::vector<std::unique_ptr<FolderWindow>> m_windows;
     std::unique_ptr<CZTimer> m_windowsTimer;
+    std::unique_ptr<CZTimer> m_deactivatedTimer; // See windowDeactivated()
     void destroyClosedWindows() noexcept;
 
     Int32 m_inotify { -1 };

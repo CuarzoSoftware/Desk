@@ -27,9 +27,10 @@ void ContextMenu::open(MSurface &parent, const SkIPoint &pos, const CZPointerBut
     layout().setWidth(size.width());
     layout().setHeight(size.height());
 
-    // Its top-left corner at the pointer, flipped/slid by the compositor near the screen edges.
+    // Its top-left corner at the pointer, flipped/slid by the compositor near the screen edges. In
+    // the parent's central node coordinates (a window's has margins: its shadow, see MMenu::popup())
     setParent(&parent);
-    setAnchorRect(SkIRect::MakeXYWH(pos.x(), pos.y(), 1, 1));
+    setAnchorRect(SkIRect::MakeXYWH(pos.x() - parent.worldRect().x(), pos.y() - parent.worldRect().y(), 1, 1));
     setAnchor(Anchor::TopLeft);
     setGravity(Gravity::BottomRight);
     setGrab(&event);

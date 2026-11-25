@@ -33,9 +33,27 @@ FolderItem::FolderItem(const DeskEntry &entry, AKNode *parent) noexcept :
     label.setWidth(DESK_WINDOW_CELL_WIDTH);
     label.setText(entry.name);
 
+    // Every cell (in view or kept for later), so none keeps waiting for one already decoded
+    GetDesk()->assets.onThumbnailReady.subscribe(this, [this](const std::filesystem::path &path){ thumbnailReady(path.string()); });
+
     // A cell created empty shows nothing until it's given a file (see FolderWindow)
     if (!entry.path.empty())
         updateImage();
+}
+
+FolderItem::~FolderItem() noexcept
+{
+    cancelThumbnail();
+}
+
+void FolderItem::cancelThumbnail() noexcept
+{
+    // Not needed anymore (e.g. the cell scrolled out of view): not decoded unless others wait for it
+    if (m_waitingThumbnail.empty())
+        return;
+
+    GetDesk()->assets.cancelThumbnail(m_waitingThumbnail);
+    m_waitingThumbnail.clear();
 }
 
 void FolderItem::setEntry(const DeskEntry &entry) noexcept
@@ -64,9 +82,25 @@ bool FolderItem::isFolder() const noexcept
     return m_entry.kind == DeskEntry::Kind::Volume || (!m_entry.launcher && m_entry.mimeType == "inode/directory");
 }
 
+void FolderItem::setDimmed(bool dimmed) noexcept
+{
+    const Float32 opacity { dimmed ? 0.5f : 1.f };
+    iconBox.setOpacity(opacity);
+    label.setOpacity(opacity);
+}
+
+void FolderItem::setDropTarget(bool target) noexcept
+{
+    if (m_dropTarget == target)
+        return;
+
+    m_dropTarget = target;
+    updateSelectionColor();
+}
+
 void FolderItem::updateSelectionColor() noexcept
 {
-    iconBox.setBackgroundColor(m_selected ? DESK_WINDOW_ICON_SELECTION.resolve(colorScheme()) : 0x00000000);
+    iconBox.setBackgroundColor(m_selected || m_dropTarget ? DESK_WINDOW_ICON_SELECTION.resolve(colorScheme()) : 0x00000000);
 }
 
 void FolderItem::colorSchemeEvent(const CZColorSchemeEvent &e)
@@ -81,13 +115,27 @@ void FolderItem::updateImage() noexcept
 
     if (m_entry.kind == DeskEntry::Kind::File && !m_entry.launcher && Assets::HasThumbnail(m_entry.mimeType))
     {
+        // Already waiting for it (e.g. updated with the same file)
+        if (m_waitingThumbnail == m_entry.path)
+        {
+            icon.setImage(assets.icon(m_entry));
+            return;
+        }
+
+        // Another file now: the previous one isn't needed
+        cancelThumbnail();
+
         // Loaded at 2x so they stay sharp on HiDPI screens (decoded in the background).
         if (auto thumb { assets.thumbnail(m_entry.path, DESK_WINDOW_ICON_SIZE * 2) })
         {
             icon.setImage(thumb);
             return;
         }
+
+        m_waitingThumbnail = m_entry.path; // Shown once ready (see thumbnailReady())
     }
+    else
+        cancelThumbnail();
 
     // The themed icon, drawn with its shadow (through the AssetBroker) at the exact size it's drawn at.
     icon.setImage(assets.icon(m_entry));
@@ -95,15 +143,21 @@ void FolderItem::updateImage() noexcept
 
 void FolderItem::thumbnailReady(const std::string &path) noexcept
 {
+    // Decoded: not waited for anymore (out of the queue)
+    if (m_waitingThumbnail.string() == path)
+        m_waitingThumbnail.clear();
+
     if (m_entry.path.string() == path)
         updateImage();
 }
 
 bool FolderItem::contains(const SkPoint &pos) const noexcept
 {
-    if (SkRect::Make(iconBox.worldRect()).contains(pos.x(), pos.y()))
-        return true;
+    return SkRect::Make(iconBox.worldRect()).contains(pos.x(), pos.y()) || nameContains(pos);
+}
 
+bool FolderItem::nameContains(const SkPoint &pos) const noexcept
+{
     SkRect text { label.textBounds() };
     text.offset(label.worldRect().x(), label.worldRect().y());
     return text.contains(pos.x(), pos.y());

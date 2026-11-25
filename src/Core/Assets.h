@@ -7,6 +7,7 @@
 #include <CZ/Core/CZTimer.h>
 #include <CZ/Ream/DRM/RDRMFormat.h>
 #include <CZ/AssetBroker/ABIconKey.h>
+#include <CZ/AssetBroker/ABShadow.h>
 #include <CZ/skia/core/SkSize.h>
 #include <deque>
 #include <map>
@@ -36,14 +37,22 @@ public:
     /// The open folder icon (a folder something is dragged over), nullptr if the theme has none.
     std::shared_ptr<RImage> openFolderIcon() noexcept;
 
+    /// Shadow of the desktop icons: strong, so they stand out on any picture.
+    static const ABShadow DesktopShadow;
+
+    /// Shadow of the icons in folder windows: faint, over the window's plain background.
+    static const ABShadow WindowShadow;
+
     /**
-     * @brief @p icon with its drop shadow, pre-rendered @p pixels wide/tall (cached per icon and size).
+     * @brief @p icon over its drop shadow @p shadow, @p pixels wide/tall (for the size it's drawn
+     *        at on each screen, see IconView).
      *
-     * For the size it's drawn at on each screen (see IconView): the icon (loaded again at its exact
-     * size, see sized()) fills the middle, with a ShadowMargin() border (fraction of the icon size)
-     * on every side for the shadow.
+     * The icon fills the middle, with a ShadowMargin() border (fraction of the icon size) on every
+     * side for the shadow. Themed icons are drawn with their shadow by the AssetBroker (loaded
+     * again at their exact size from their file, and shared with other apps if the service is
+     * running). Thumbnails are drawn here (cached per thumbnail, size and shadow).
      */
-    std::shared_ptr<RImage> shadowedIcon(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept;
+    std::shared_ptr<RImage> shadowedIcon(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale, const ABShadow &shadow) noexcept;
 
     /**
      * @brief @p icon (loaded by this class) again, at @p pixels for a screen with scale @p scale.
@@ -54,7 +63,7 @@ public:
     std::shared_ptr<RImage> sized(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept;
 
     /// The shadow border of shadowedIcon(), as a fraction of the icon size.
-    static float ShadowMargin() noexcept;
+    static float ShadowMargin(const ABShadow &shadow) noexcept { return shadow.radius; }
 
     /// Whether pictures of this type get a thumbnail instead of an icon.
     static bool HasThumbnail(const std::string &mimeType) noexcept;
@@ -120,7 +129,7 @@ private:
         std::shared_ptr<RImage> image;
     };
 
-    std::map<std::tuple<const RImage*, Int32, Int32>, Shadowed> m_shadowed; // By icon, size and scale
+    std::map<std::tuple<const RImage*, Int32, Int32, const ABShadow*>, Shadowed> m_shadowed; // Thumbnails, by image, size, scale and shadow
 
     // Where each loaded icon comes from (to load it at other sizes)
     struct Source

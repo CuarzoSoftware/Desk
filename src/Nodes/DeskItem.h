@@ -39,6 +39,9 @@ public:
     /// Dims the item (while it's being dragged).
     void setDimmed(bool dimmed) noexcept;
 
+    /// Whether it's a folder or a disk (opened in a window).
+    bool isFolder() const noexcept { return m_entry.kind == DeskEntry::Kind::Volume || (!m_entry.launcher && m_entry.mimeType == "inode/directory"); }
+
     /// Whether files can be dropped on it: folders and disks (see Background::dragOver()).
     bool acceptsDrops() const noexcept;
 

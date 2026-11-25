@@ -46,7 +46,7 @@ constexpr Int32 DESK_MARGIN_LEFT        { 32 };
 constexpr SkColor DESK_ICON_SELECTION   { 0x47000000 }; // Rounded square behind a selected icon
 constexpr SkColor DESK_LABEL_SELECTION  { 0xFF0A64D6 }; // Behind a selected item's label
 constexpr SkColor DESK_ICON_SHADOW_COLOR { 0x66000000 }; // Soft shadow following each icon's shape
-constexpr SkScalar DESK_ICON_SHADOW_RADIUS { 15.f };
+constexpr SkScalar DESK_ICON_SHADOW_RADIUS { 15.f };   // At DESK_ICON_SIZE_DEFAULT (scales with the icon)
 constexpr Int32   DESK_ICON_SHADOW_OFFSET_Y { 2 };
 constexpr SkColor DESK_LABEL_COLOR      { 0xFFFFFFFF };
 constexpr SkColor DESK_LABEL_SHADOW     { 0xCC000000 };
@@ -55,6 +55,24 @@ constexpr size_t  DESK_DRAG_STACK_MAX   { 5 };          // Icons shown stacked w
 constexpr UInt32  DESK_DRAG_GATHER_MS   { 300 };        // Icons flying to the pointer
 constexpr SkColor DESK_RUBBER_FILL      { 0x33FFFFFF }; // Rubber band selection
 constexpr SkColor DESK_RUBBER_BORDER    { 0x99FFFFFF };
+
+// --- Folder windows ------------------------------------------------------------------------
+
+constexpr Int32 DESK_WINDOW_WIDTH       { 920 };
+constexpr Int32 DESK_WINDOW_HEIGHT      { 560 };
+constexpr Int32 DESK_WINDOW_SIDEBAR_WIDTH { 200 };
+constexpr Int32 DESK_WINDOW_MIN_CONTENT_WIDTH { 320 }; // Of the files area (next to the sidebar)
+constexpr Int32 DESK_WINDOW_MIN_HEIGHT  { 280 };
+constexpr Int32 DESK_WINDOW_ICON_SIZE   { 64 };  // Finder's default icon view size
+constexpr Int32 DESK_WINDOW_CELL_WIDTH  { 104 };
+constexpr Int32 DESK_WINDOW_GRID_PADDING { 14 }; // Around the grid
+constexpr Int32 DESK_WINDOW_GRID_GAP    { 6 };   // Between rows
+constexpr Int32 DESK_WINDOW_LABEL_FONT_SIZE { 12 };
+// Icons in windows: a faint shadow (over a plain background, not a picture), at DESK_WINDOW_ICON_SIZE
+constexpr SkColor  DESK_WINDOW_ICON_SHADOW_COLOR    { 0x40000000 };
+constexpr SkScalar DESK_WINDOW_ICON_SHADOW_RADIUS   { 6.f };
+constexpr SkScalar DESK_WINDOW_ICON_SHADOW_OFFSET_Y { 1.5f };
+constexpr CZAdaptiveColor DESK_WINDOW_ICON_SELECTION { 0x1F000000, 0x29FFFFFF }; // Rounded square behind a selected icon
 
 // --- Behaviour -------------------------------------------------------------------------------
 

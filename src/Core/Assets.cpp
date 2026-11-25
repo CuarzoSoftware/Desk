@@ -154,36 +154,46 @@ std::shared_ptr<RImage> Assets::openFolderIcon() noexcept
 
 /* ---------------------------------------- Pictures ----------------------------------------- */
 
-float Assets::ShadowMargin() noexcept
-{
-    // The shadow keeps the proportions it has at the default icon size.
-    return float(DESK_ICON_SHADOW_RADIUS) / float(DESK_ICON_SIZE_DEFAULT);
-}
+// Their blur and offset are fractions of the icon size (they keep their look at any size)
+const ABShadow Assets::DesktopShadow { 0, DESK_ICON_SHADOW_RADIUS / DESK_ICON_SIZE_DEFAULT,
+    0.f, DESK_ICON_SHADOW_OFFSET_Y / float(DESK_ICON_SIZE_DEFAULT), DESK_ICON_SHADOW_COLOR };
 
-std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale) noexcept
+const ABShadow Assets::WindowShadow { 0, DESK_WINDOW_ICON_SHADOW_RADIUS / DESK_WINDOW_ICON_SIZE,
+    0.f, DESK_WINDOW_ICON_SHADOW_OFFSET_Y / DESK_WINDOW_ICON_SIZE, DESK_WINDOW_ICON_SHADOW_COLOR };
+
+std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon, Int32 pixels, Int32 scale, const ABShadow &shadow) noexcept
 {
+    CZ_UNUSED(scale) // pixels are already physical: the same artwork for every scale
+
     if (!icon)
         return {};
 
     pixels = std::max(pixels, 8);
 
-    if (auto it { m_shadowed.find({ icon.get(), pixels, scale }) }; it != m_shadowed.end() && !it->second.icon.expired())
+    // The image covers the icon plus the shadow's room on each side (whole pixels: the icon stays
+    // on the pixel grid when drawn 1:1)
+    ABShadow padded { shadow };
+    padded.padding = ABShadow::PaddingFor(pixels, ShadowMargin(shadow));
+    const Int32 size { std::max(1, pixels - 2 * padded.padding) };
+
+    // Themed icons: drawn with their shadow by the AssetBroker, from their file at the exact size
+    if (m_ab)
+        if (auto src { m_sources.find(icon.get()) }; src != m_sources.end() && !src->second.image.expired())
+            if (auto image { m_ab->icon(src->second.key, { pixels, pixels }, nullptr, &padded) })
+                return image;
+
+    // Thumbnails (decoded here)
+    if (auto it { m_shadowed.find({ icon.get(), pixels, scale, &shadow }) }; it != m_shadowed.end() && !it->second.icon.expired())
         return it->second.image;
 
     std::erase_if(m_shadowed, [](const auto &pair){ return pair.second.icon.expired(); });
 
-    // The image covers the icon plus the shadow margin on each side, in pixels (scale 1).
-    const Int32 size { std::max(1, Int32(std::floor(SkScalar(pixels) / (1.f + 2.f * ShadowMargin())))) };
-    const SkScalar margin { (pixels - size) / 2.f };
-    const SkScalar ratio { SkScalar(size) / SkScalar(DESK_ICON_SIZE_DEFAULT) };
-    const SkScalar sigma { DESK_ICON_SHADOW_RADIUS * ratio / 3.f };
-    const SkScalar dy { DESK_ICON_SHADOW_OFFSET_Y * ratio };
+    const SkScalar margin { SkScalar(padded.padding) };
+    const SkScalar sigma { shadow.radius * size / 3.f };
+    const SkScalar dx { shadow.offsetX * size }, dy { shadow.offsetY * size };
 
-    // Themed icons are loaded again at their exact size (never resampled). Thumbnails (decoded
-    // pictures, at least as large) are resampled once, with a cubic filter.
-    auto sizedIcon { sized(icon, size, scale) };
-    const bool exact { sizedIcon != icon };
-    auto source { sizedIcon->skImage() };
+    // Pictures at least as large as the icon: resampled once, with a cubic filter
+    auto source { icon->skImage() };
     auto surface { source ? RSurface::Make(SkISize::Make(pixels, pixels), 1, true) : nullptr };
 
     if (!surface)
@@ -194,21 +204,20 @@ std::shared_ptr<RImage> Assets::shadowedIcon(const std::shared_ptr<RImage> &icon
         SkCanvas *c { pass->getCanvas() };
         c->clear(SK_ColorTRANSPARENT);
 
-        // Contained and centered in the icon square (thumbnails keep their aspect ratio).
+        // Contained and centered in the icon square (keeping the aspect ratio).
         const SkScalar s { std::min(SkScalar(size) / source->width(), SkScalar(size) / source->height()) };
         const SkRect dst { SkRect::MakeXYWH(margin + (size - source->width() * s) / 2.f, margin + (size - source->height() * s) / 2.f,
                                             source->width() * s, source->height() * s) };
 
         SkPaint paint;
         paint.setAntiAlias(true);
-        paint.setImageFilter(SkImageFilters::DropShadow(0.f, dy, sigma, sigma, DESK_ICON_SHADOW_COLOR, nullptr));
-        const SkSamplingOptions sampling { exact ? SkSamplingOptions(SkFilterMode::kLinear) : SkSamplingOptions(SkCubicResampler::Mitchell()) };
+        paint.setImageFilter(SkImageFilters::DropShadow(dx, dy, sigma, sigma, shadow.color, nullptr));
         c->drawImageRect(source, SkRect::MakeIWH(source->width(), source->height()), dst,
-                         sampling, &paint, SkCanvas::kFast_SrcRectConstraint);
+                         SkSamplingOptions(SkCubicResampler::Mitchell()), &paint, SkCanvas::kFast_SrcRectConstraint);
     }
 
     auto image { surface->image() };
-    m_shadowed[{ icon.get(), pixels, scale }] = { icon, image };
+    m_shadowed[{ icon.get(), pixels, scale, &shadow }] = { icon, image };
     return image;
 }
 

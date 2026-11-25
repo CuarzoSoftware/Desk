@@ -32,8 +32,8 @@ MenuBar::MenuBar() noexcept
     /* File */
 
     m_file = addMenu(m_topbar.get(), "File");
-    addAction(m_file.get(), "New Window", "⌘N", [desk]{ desk->openFolder(desk->xdgkit->homeDir()); });
-    m_shortcuts.push_back({ KEY_N, false, nullptr, [desk]{ desk->openFolder(desk->xdgkit->homeDir()); } });
+    addAction(m_file.get(), "New Window", "⌘N", [desk]{ desk->openFolder(desk->xdgkit->homeDir(), true); });
+    m_shortcuts.push_back({ KEY_N, false, nullptr, [desk]{ desk->openFolder(desk->xdgkit->homeDir(), true); } });
     addAction(m_file.get(), "New Folder", "⇧⌘N", [desk]{ if (auto *bg { desk->iconsBackground() }) bg->newFolder(); });
     m_shortcuts.push_back({ KEY_N, true, nullptr, [desk]{ if (auto *bg { desk->iconsBackground() }) bg->newFolder(); } });
     addDivider(m_file.get());

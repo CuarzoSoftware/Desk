@@ -1,9 +1,12 @@
 #include <sys/stat.h>
 #include <CZ/Core/Utils/CZProcess.h>
 #include <Core/Desk.h>
+#include <CZ/Core/CZTime.h>
 #include <Core/Log.h>
 #include <Surfaces/Background.h>
 #include <Core/MenuBar.h>
+#include <Window/FolderWindow.h>
+#include <Core/FolderScanner.h>
 #include <CZ/Marco/MScreen.h>
 #include <CZ/XDG/XDGDesktopEntry.h>
 #include <CZ/XDG/XDGMimeDatabase.h>
@@ -40,8 +43,12 @@ Desk::Desk() noexcept
     if (!marco)
         return;
 
+    // Its windows (folders) go with the dock's Desk tile (see Shelf::DeskAppId)
+    marco->setAppId("org.cuarzo.Desk");
+
     // Timers register with the CZCore when created: only once Marco made it.
     m_rescanTimer = std::make_unique<CZTimer>([this](CZTimer *){ rescan(); });
+    scanner = std::make_unique<FolderScanner>();
 
     xdgkit = XDGKit::Make();
     settings.load();
@@ -75,6 +82,8 @@ Desk::Desk() noexcept
 
 Desk::~Desk() noexcept
 {
+    m_windows.clear();
+    scanner.reset();
     menuBar.reset();
 
     if (marco)
@@ -175,13 +184,109 @@ void Desk::setActiveBackground(Background *background) noexcept
     selectionChanged();
 }
 
-void Desk::openFolder(const fs::path &path) noexcept
+bool Desk::openFolder(const fs::path &requested, bool newWindow, const std::string &select, const std::string &token,
+                      const IconOrigin *origin) noexcept
 {
-    DeskEntry dir;
-    dir.path = path;
-    dir.name = path.filename().string();
-    dir.mimeType = "inode/directory";
-    open({ &dir });
+    std::error_code ec;
+
+    // E.g. trash:/// (or a folder that went away): the session's opener knows what to do
+    if (!fs::is_directory(requested, ec))
+    {
+        Log(CZInfo, CZLN, "Not a folder: {} (trying xdg-open)", requested.string());
+        Spawn({ "xdg-open", requested.string() });
+        return false;
+    }
+
+    const fs::path path { FolderWindow::Normalized(requested) };
+
+    // Already shown: that window comes to the front (like Finder)
+    if (!newWindow)
+        for (const auto &window : m_windows)
+        {
+            if (!window->mapped() || window->folder() != path)
+                continue;
+
+            Log(CZInfo, CZLN, "{} is already open: activating its window", path.string());
+            window->select(select);
+            window->activate(token);
+            return false;
+        }
+
+    if (!m_windowsTimer)
+        m_windowsTimer = std::make_unique<CZTimer>([this](CZTimer *){ destroyClosedWindows(); });
+
+    Log(CZInfo, CZLN, "Opening a window for {}", path.string());
+    auto &window { m_windows.emplace_back(std::make_unique<FolderWindow>(path)) };
+
+    // Closed (unmapped): destroyed on the next loop iteration
+    window->onMappedChanged.subscribe(window.get(), [this]{ m_windowsTimer->start(0); });
+    // Opened from a desktop icon: grows from it (see announceFromIcon())
+    const bool fromIcon { origin && !origin->rect.isEmpty() && announceFromIcon(window->title(), *origin) };
+
+    window->setMapped(true);
+    window->setKeyboardFocus(true);
+    window->select(select);
+
+    // Asked by another app: its token lets the new window take the focus
+    if (!token.empty())
+        window->activate(token);
+
+    return fromIcon;
+}
+
+bool Desk::announceFromIcon(const std::string &title, const IconOrigin &origin) noexcept
+{
+    if (!m_bus)
+        return false;
+
+    sd_bus_message *call { nullptr };
+    sd_bus_message *reply { nullptr };
+    sd_bus_error error SD_BUS_ERROR_NULL;
+
+    int r { sd_bus_message_new_method_call(m_bus->bus(), &call, "org.cuarzo.Crystals", "/org/cuarzo/Crystals",
+                                           "org.cuarzo.Crystals", "OpenFromIcon") };
+
+    if (r >= 0)
+        r = sd_bus_message_append(call, "siiii", title.c_str(), origin.rect.x(), origin.rect.y(),
+                                  origin.rect.width(), origin.rect.height());
+
+    // Synchronous: Crystals must know before the window maps (it answers right away)
+    if (r >= 0)
+        r = sd_bus_call(m_bus->bus(), call, 200 * 1000, &error, &reply);
+
+    if (r < 0)
+        Log(CZDebug, CZLN, "OpenFromIcon failed (no Crystals?): {}", error.message ? error.message : strerror(-r));
+
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
+    sd_bus_message_unref(call);
+    return r >= 0;
+}
+
+void Desk::destroyClosedWindows() noexcept
+{
+    std::erase_if(m_windows, [](const auto &window){ return !window->mapped(); });
+}
+
+std::vector<const DeskEntry*> Desk::volumes() const noexcept
+{
+    std::vector<const DeskEntry*> volumes;
+
+    for (const auto &e : m_entries)
+        if (e.kind == DeskEntry::Kind::Volume)
+            volumes.emplace_back(&e);
+
+    return volumes;
+}
+
+std::string Desk::displayName(const fs::path &dir) const noexcept
+{
+    for (const DeskEntry *volume : volumes())
+        if (volume->path == dir)
+            return volume->name;
+
+    const std::string name { dir.filename().string() };
+    return name.empty() ? dir.string() : name;
 }
 
 void Desk::sortEntries(std::vector<DeskEntry> &entries) const noexcept
@@ -289,9 +394,110 @@ void Desk::shortcut(UInt32 key, bool shift) noexcept
 
 static int NewWindowMethod(sd_bus_message *m, void *, sd_bus_error *)
 {
-    GetDesk()->openFolder(GetDesk()->xdgkit->homeDir());
+    GetDesk()->openFolder(GetDesk()->xdgkit->homeDir(), true);
     return sd_bus_reply_method_return(m, "");
 }
+
+/*
+ * org.freedesktop.FileManager1 (the file manager interface apps use, e.g. a browser's "Show in
+ * folder"). URIs are file:// URIs; the startup id is an activation token.
+ */
+
+// file:///home/user/My%20File → /home/user/My File (empty if not a local file URI)
+static fs::path PathFromURI(const std::string &uri) noexcept
+{
+    std::string_view rest { uri };
+
+    if (rest.starts_with("file://"))
+        rest.remove_prefix(7);
+    else if (!rest.starts_with("/"))
+        return {};
+
+    // file://localhost/path
+    if (!rest.starts_with("/"))
+    {
+        const auto slash { rest.find('/') };
+
+        if (slash == std::string_view::npos || rest.substr(0, slash) != "localhost")
+            return {};
+
+        rest.remove_prefix(slash);
+    }
+
+    std::string path;
+
+    for (size_t i = 0; i < rest.size(); i++)
+    {
+        if (rest[i] == '%' && i + 2 < rest.size() && std::isxdigit((unsigned char)rest[i + 1]) && std::isxdigit((unsigned char)rest[i + 2]))
+        {
+            path += char(std::stoi(std::string(rest.substr(i + 1, 2)), nullptr, 16));
+            i += 2;
+        }
+        else
+            path += rest[i];
+    }
+
+    return fs::path(path).lexically_normal();
+}
+
+static int ShowURIs(sd_bus_message *m, bool items)
+{
+    std::vector<std::string> uris;
+    char **strv { nullptr };
+    const char *startupId { nullptr };
+
+    int r { sd_bus_message_read_strv(m, &strv) };
+
+    if (r >= 0)
+        r = sd_bus_message_read(m, "s", &startupId);
+
+    if (strv)
+    {
+        for (char **s = strv; *s; s++)
+        {
+            uris.emplace_back(*s);
+            free(*s);
+        }
+
+        free(strv);
+    }
+
+    if (r < 0)
+        return r;
+
+    const std::string token { startupId ? startupId : "" };
+
+    for (const auto &uri : uris)
+    {
+        const fs::path path { PathFromURI(uri) };
+
+        if (path.empty())
+        {
+            Log(CZWarning, CZLN, "FileManager1: not a local file: {}", uri);
+            continue;
+        }
+
+        // ShowItems: the folder holding it, with it selected
+        if (items && path.has_parent_path() && path != path.root_path())
+            GetDesk()->openFolder(path.parent_path(), false, path.filename().string(), token);
+        else
+            GetDesk()->openFolder(path, false, {}, token);
+    }
+
+    return sd_bus_reply_method_return(m, "");
+}
+
+static int ShowFoldersMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, false); }
+static int ShowItemsMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, true); }
+
+static const sd_bus_vtable FileManagerVTable[]
+{
+    SD_BUS_VTABLE_START(0),
+    SD_BUS_METHOD("ShowFolders", "ass", "", ShowFoldersMethod, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ShowItems", "ass", "", ShowItemsMethod, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ShowItemProperties", "ass", "", ShowItemsMethod, SD_BUS_VTABLE_UNPRIVILEGED), // No properties window yet
+    SD_BUS_VTABLE_END
+};
 
 static const sd_bus_vtable DeskVTable[]
 {
@@ -316,6 +522,15 @@ void Desk::initBus() noexcept
 
     if (r < 0)
         Log(CZWarning, CZLN, "Can't own org.cuarzo.Desk on the session bus: {}", strerror(-r));
+
+    // The standard file manager interface (another file manager may own it: then it's theirs)
+    r = sd_bus_add_object_vtable(bus->bus(), nullptr, "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1", FileManagerVTable, nullptr);
+
+    if (r >= 0)
+        r = sd_bus_request_name(bus->bus(), "org.freedesktop.FileManager1", 0);
+
+    if (r < 0)
+        Log(CZWarning, CZLN, "Can't own org.freedesktop.FileManager1 on the session bus: {}", strerror(-r));
 }
 
 /* ------------------------------------ Desktop folder ------------------------------------- */
@@ -576,18 +791,23 @@ std::vector<DeskEntry> Desk::scanVolumes() noexcept
     return volumes;
 }
 
-std::vector<DeskEntry> Desk::scanFiles() noexcept
+std::vector<DeskEntry> Desk::scanFolder(const fs::path &dir, bool hidden) const noexcept
+{
+    return ScanFolder(*xdgkit, dir, hidden);
+}
+
+std::vector<DeskEntry> Desk::ScanFolder(XDGKit &kit, const fs::path &dir, bool hidden) noexcept
 {
     std::vector<DeskEntry> files;
     std::error_code ec;
-    auto &mime { xdgkit->mimeDatabase() };
+    auto &mime { kit.mimeDatabase() };
 
-    for (const auto &dirEntry : fs::directory_iterator(m_desktopDir, fs::directory_options::skip_permission_denied, ec))
+    for (const auto &dirEntry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec))
     {
         const std::string name { dirEntry.path().filename().string() };
 
         // Hidden and backup files.
-        if (name.empty() || name.front() == '.' || name.back() == '~')
+        if (name.empty() || (!hidden && (name.front() == '.' || name.back() == '~')))
             continue;
 
         DeskEntry file;
@@ -617,6 +837,11 @@ std::vector<DeskEntry> Desk::scanFiles() noexcept
     });
 
     return files;
+}
+
+std::vector<DeskEntry> Desk::scanFiles() noexcept
+{
+    return scanFolder(m_desktopDir);
 }
 
 void Desk::rescan() noexcept
@@ -687,13 +912,30 @@ std::vector<std::shared_ptr<const XDGDesktopEntry>> Desk::appsFor(const DeskEntr
     return xdgkit->mimeDatabase().apps(entry.mimeType);
 }
 
-void Desk::open(const std::vector<const DeskEntry*> &entries) noexcept
+std::unordered_set<std::string> Desk::open(const std::vector<const DeskEntry*> &entries, const std::unordered_map<std::string, IconOrigin> *origins) noexcept
 {
+    std::unordered_set<std::string> fromIcon;
+
     for (const DeskEntry *e : entries)
     {
         if (e->launcher)
         {
             e->launcher->launch();
+            continue;
+        }
+
+        // Folders and disks: a window of ours (like Finder)
+        if (e->kind == DeskEntry::Kind::Volume || e->mimeType == "inode/directory")
+        {
+            const IconOrigin *origin { nullptr };
+
+            if (origins)
+                if (auto it { origins->find(e->path.string()) }; it != origins->end())
+                    origin = &it->second;
+
+            if (openFolder(e->path, false, {}, {}, origin))
+                fromIcon.insert(e->path.string());
+
             continue;
         }
 
@@ -708,6 +950,8 @@ void Desk::open(const std::vector<const DeskEntry*> &entries) noexcept
         Log(CZInfo, CZLN, "No app found for {} ({}): trying xdg-open", e->path.string(), e->mimeType);
         Spawn({ "xdg-open", e->path.string() });
     }
+
+    return fromIcon;
 }
 
 void Desk::openWith(const DeskEntry &entry, const XDGDesktopEntry &app) noexcept
@@ -809,19 +1053,28 @@ void Desk::eject(const DeskEntry &volume) noexcept
 
 std::string Desk::newFolder() noexcept
 {
+    const std::string name { newFolder(m_desktopDir) };
+
+    if (!name.empty())
+        rescan();
+
+    return name;
+}
+
+std::string Desk::newFolder(const fs::path &dir) noexcept
+{
     std::string name { "untitled folder" };
     std::error_code ec;
 
-    for (int i = 2; fs::exists(m_desktopDir / name, ec); i++)
+    for (int i = 2; fs::exists(dir / name, ec); i++)
         name = "untitled folder " + std::to_string(i);
 
-    if (!fs::create_directory(m_desktopDir / name, ec))
+    if (!fs::create_directory(dir / name, ec))
     {
-        Log(CZError, CZLN, "Can't create {}: {}", (m_desktopDir / name).string(), ec.message());
+        Log(CZError, CZLN, "Can't create {}: {}", (dir / name).string(), ec.message());
         return {};
     }
 
-    rescan();
     return name;
 }
 

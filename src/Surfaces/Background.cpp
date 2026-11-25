@@ -443,14 +443,29 @@ void Background::startRename(DeskItem &target) noexcept
 
 void Background::openSelection() noexcept
 {
-    // A few of them at most (it's only a hint)
+    // Folders open in windows growing from their icon (see Desk::openFolder()), in global coordinates
+    std::unordered_map<std::string, IconOrigin> origins;
+    const auto items { selection() };
+
+    for (DeskItem *item : items)
+    {
+        SkIRect rect { item->icon.worldRect() };
+
+        if (MScreen *s { screen() })
+            rect.offset(s->props().pos);
+
+        origins[item->entry().path.string()] = { rect };
+    }
+
+    const auto fromIcon { GetDesk()->open(selectedEntries(), &origins) };
+
+    // The others: their icon grows in place while fading out (a few of them at most, it's a hint).
+    // Not those already growing into their window (the compositor's animation).
     size_t animated { 0 };
 
-    for (DeskItem *item : selection())
-        if (animated++ < 6)
+    for (DeskItem *item : items)
+        if (!fromIcon.contains(item->entry().path.string()) && animated++ < 6)
             animateOpening(*item);
-
-    GetDesk()->open(selectedEntries());
 }
 
 void Background::animateOpening(DeskItem &item) noexcept

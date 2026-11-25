@@ -4,21 +4,23 @@
 #include <Core/Types.h>
 #include <CZ/AK/Nodes/AKContainer.h>
 #include <CZ/AK/Nodes/AKImageFrame.h>
+#include <Core/Assets.h>
 #include <memory>
 
 /**
  * @brief An icon (or thumbnail) with a soft drop shadow following its shape, so it stands out on
  *        any background picture.
  *
- * The icon and its shadow are pre-rendered together into one image (Assets::shadowedIcon(), cached
- * per icon) shown by a plain image frame: no live shadow effect to recompute when repainting. The
+ * The icon and its shadow are pre-rendered together into one image (Assets::shadowedIcon(): by the
+ * AssetBroker for themed icons) shown by a plain image frame: no live shadow effect to recompute when repainting. The
  * frame extends past the node by the shadow's margin (a percentage of the node, so it follows any
  * size the node is given).
  */
 class IconView final : public AKContainer
 {
 public:
-    IconView(AKNode *parent = nullptr) noexcept;
+    /// @p shadow: one of Assets' shadows (kept by reference).
+    IconView(AKNode *parent = nullptr, const ABShadow &shadow = Assets::DesktopShadow) noexcept;
 
     void setImage(std::shared_ptr<RImage> image) noexcept;
 
@@ -30,6 +32,7 @@ public:
     AKImageFrame frame { this };
 
 private:
+    const ABShadow &m_shadow;
     std::shared_ptr<RImage> m_image;
 };
 

@@ -12,6 +12,8 @@
 #include <CZ/Core/CZTimer.h>
 #include <CZ/Core/CZWeak.h>
 #include <filesystem>
+#include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,6 +21,13 @@
 namespace CZ { class CZEventSource; class CZBus; }
 class Background;
 class MenuBar;
+class FolderWindow;
+class FolderScanner;
+/// Where something was opened from on the desktop: an icon's rect, in global coordinates.
+struct IconOrigin
+{
+    SkIRect rect {};
+};
 
 /// Something shown on the desktop: a mounted disk or a file in the desktop folder.
 struct DeskEntry
@@ -91,8 +100,44 @@ public:
     /// Height of Firmament's top bar (its size setting is followed live).
     Int32 topbarHeight() const noexcept;
 
-    /// Opens a folder in the file manager.
-    void openFolder(const std::filesystem::path &path) noexcept;
+    /**
+     * @brief Shows a folder (or disk) in a window (see FolderWindow).
+     *
+     * If a window already shows it, that window is activated instead (unless @p newWindow).
+     * Folders that can't be read (or aren't folders, e.g. trash:///) are handed to xdg-open.
+     *
+     * @param select A file of the folder to select (its name), if any.
+     * @param token  An activation token from the app asking (see MToplevel::activate()), if any.
+     * @param origin The desktop icon it's opened from, if any: a new window grows from it (the
+     *               compositor's animation, see announceFromIcon()).
+     *
+     * @return Whether a new window grows from @p origin (the compositor accepted it).
+     */
+    bool openFolder(const std::filesystem::path &path, bool newWindow = false, const std::string &select = {},
+                    const std::string &token = {}, const IconOrigin *origin = nullptr) noexcept;
+
+    /// The open folder windows.
+    const std::vector<std::unique_ptr<FolderWindow>> &windows() const noexcept { return m_windows; }
+
+    /// The mounted disks (the system disk first), as shown on the desktop.
+    std::vector<const DeskEntry*> volumes() const noexcept;
+
+    /**
+     * @brief The files of a folder (see DeskEntry), sorted by name (case-insensitive).
+     *
+     * Hidden ones (starting with ".") and backups (ending with "~") only with @p hidden. Keys are
+     * the file names.
+     */
+    std::vector<DeskEntry> scanFolder(const std::filesystem::path &dir, bool hidden = false) const noexcept;
+
+    /// scanFolder() with the XDGKit @p kit (e.g. from another thread, see FolderScanner).
+    static std::vector<DeskEntry> ScanFolder(XDGKit &kit, const std::filesystem::path &dir, bool hidden) noexcept;
+
+    /// Reads folders in the background (folder windows).
+    std::unique_ptr<FolderScanner> scanner;
+
+    /// The name a folder is shown with: the disk's name for mount points, the file name otherwise.
+    std::string displayName(const std::filesystem::path &dir) const noexcept;
 
     /// Desktop icon size (clamped, saved).
     void setIconSize(Int32 size) noexcept;
@@ -113,8 +158,14 @@ public:
     /// Desk's menus in the global menu bar (nullptr until Marco is ready).
     std::unique_ptr<MenuBar> menuBar;
 
-    /// Opens entries with their default apps (launchers are launched).
-    void open(const std::vector<const DeskEntry*> &entries) noexcept;
+    /**
+     * @brief Opens entries with their default apps (launchers are launched). Folders open in windows
+     *        growing from their icon in @p origins (by path), if there.
+     *
+     * @return The paths whose new window grows from its icon (no other opening animation needed).
+     */
+    std::unordered_set<std::string> open(const std::vector<const DeskEntry*> &entries,
+              const std::unordered_map<std::string, IconOrigin> *origins = nullptr) noexcept;
 
     /// Opens a file with a specific app.
     void openWith(const DeskEntry &entry, const XDGDesktopEntry &app) noexcept;
@@ -139,6 +190,9 @@ public:
 
     /// Creates "untitled folder" (or "untitled folder N") in the desktop folder. Returns its key.
     std::string newFolder() noexcept;
+
+    /// Creates "untitled folder" (or "untitled folder N") in @p dir. Returns its name (empty on failure).
+    std::string newFolder(const std::filesystem::path &dir) noexcept;
 
     /**
      * @brief Renames a file or folder of the desktop (keeping its place in the grid).
@@ -191,6 +245,19 @@ private:
 
     std::vector<DeskEntry> m_entries;
     std::filesystem::path m_desktopDir;
+
+    /**
+     * @brief Tells Crystals a window titled @p title is about to be mapped, opened from the icon at
+     *        @p origin: it grows from there (org.cuarzo.Crystals OpenFromIcon on the session bus).
+     *
+     * Waits for the reply (briefly), so Crystals knows before the window maps.
+     */
+    bool announceFromIcon(const std::string &title, const IconOrigin &origin) noexcept;
+
+    // Closed windows are destroyed later (not from their own handlers)
+    std::vector<std::unique_ptr<FolderWindow>> m_windows;
+    std::unique_ptr<CZTimer> m_windowsTimer;
+    void destroyClosedWindows() noexcept;
 
     Int32 m_inotify { -1 };
     Int32 m_desktopWatch { -1 }, m_configWatch { -1 };

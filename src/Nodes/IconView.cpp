@@ -1,7 +1,9 @@
 #include <Nodes/IconView.h>
 #include <Core/Desk.h>
 
-IconView::IconView(AKNode *parent) noexcept : AKContainer(YGFlexDirectionColumn, false, parent)
+IconView::IconView(AKNode *parent, const ABShadow &shadow) noexcept :
+    AKContainer(YGFlexDirectionColumn, false, parent),
+    m_shadow(shadow)
 {
     SkRegion empty;
     setInputRegion(&empty);
@@ -9,7 +11,7 @@ IconView::IconView(AKNode *parent) noexcept : AKContainer(YGFlexDirectionColumn,
 
     // The pre-rendered image covers the icon plus the shadow margin around it (as a fraction of the
     // icon size, see Assets::shadowedIcon()).
-    const float margin { 100.f * Assets::ShadowMargin() };
+    const float margin { 100.f * Assets::ShadowMargin(m_shadow) };
     frame.setSizeMode(AKImageFrame::SizeMode::Fill);
     frame.layout().setPositionType(YGPositionTypeAbsolute);
     frame.layout().positionPercent(YGEdgeLeft, -margin);
@@ -27,7 +29,7 @@ void IconView::setImage(std::shared_ptr<RImage> image) noexcept
 
     // Rendered for the size it's drawn at on each screen (the frame includes the shadow margin).
     if (image)
-        frame.setImageProvider([image](Int32 pixels, Int32 scale){ return GetDesk()->assets.shadowedIcon(image, pixels, scale); });
+        frame.setImageProvider([this, image](Int32 pixels, Int32 scale){ return GetDesk()->assets.shadowedIcon(image, pixels, scale, m_shadow); });
     else
         frame.setImage(nullptr);
 }

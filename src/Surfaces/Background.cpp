@@ -1,3 +1,4 @@
+#include <CZ/Core/CZMouseSettings.h>
 #include <filesystem>
 #include <string_view>
 #include <chrono>
@@ -604,7 +605,7 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
         if (m_pressItem && !m_pressRenameKey.empty() && m_pressItem->key() == m_pressRenameKey)
         {
             m_renameCandidate = m_pressRenameKey;
-            m_renameTimer.start(DESK_DOUBLE_CLICK_MS);
+            m_renameTimer.start(CZMouseSettings::DoubleClickMs());
         }
 
         m_pressRenameKey.clear();
@@ -644,7 +645,7 @@ void Background::pointerButtonEvent(const CZPointerButtonEvent &e)
     }
 
     // Double click: open.
-    if (m_lastClickKey == item->key() && now - m_lastClickMs <= DESK_DOUBLE_CLICK_MS)
+    if (m_lastClickKey == item->key() && now - m_lastClickMs <= CZMouseSettings::DoubleClickMs())
     {
         m_lastClickMs = 0;
         m_pressRenameKey.clear();
@@ -722,7 +723,7 @@ void Background::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
 
         const UInt32 now { CZTime::Ms() };
 
-        if (m_lastReturnMs != 0 && now - m_lastReturnMs <= DESK_DOUBLE_CLICK_MS)
+        if (m_lastReturnMs != 0 && now - m_lastReturnMs <= CZMouseSettings::DoubleClickMs())
         {
             m_lastReturnMs = 0;
             openSelection();

@@ -94,7 +94,6 @@ constexpr CZAdaptiveColor DESK_WINDOW_ICON_SELECTION { 0x1F000000, 0x29FFFFFF };
 
 // --- Behaviour -------------------------------------------------------------------------------
 
-constexpr UInt32  DESK_DOUBLE_CLICK_MS  { 400 };
 constexpr UInt32  DESK_OPEN_ZOOM_MS     { 200 };   // An opened item's icon growing in place, fading out
 constexpr float   DESK_OPEN_ZOOM_SCALE  { 4.5f };  // How much larger it gets
 constexpr Float32 DESK_DRAG_THRESHOLD   { 4.f };

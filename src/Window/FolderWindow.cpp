@@ -1,3 +1,4 @@
+#include <CZ/Core/CZMouseSettings.h>
 #include <Window/FolderWindow.h>
 #include <Core/Log.h>
 #include <Core/FolderScanner.h>
@@ -1610,7 +1611,7 @@ void FolderWindow::pointerButtonEvent(const CZPointerButtonEvent &e)
         if (e.button == BTN_LEFT && !m_pressRenameKey.empty())
         {
             m_renameCandidate = std::move(m_pressRenameKey);
-            m_renameTimer.start(DESK_DOUBLE_CLICK_MS);
+            m_renameTimer.start(CZMouseSettings::DoubleClickMs());
         }
 
         m_pressRenameKey.clear();
@@ -1713,7 +1714,7 @@ void FolderWindow::pointerButtonEvent(const CZPointerButtonEvent &e)
     }
 
     // Double click: open (Ctrl: folders in a new window)
-    if (m_lastClickKey == key && now - m_lastClickMs <= DESK_DOUBLE_CLICK_MS)
+    if (m_lastClickKey == key && now - m_lastClickMs <= CZMouseSettings::DoubleClickMs())
     {
         m_pressRenameKey.clear();
         m_lastClickMs = 0;

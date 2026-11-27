@@ -50,6 +50,7 @@ namespace CZ { class CZEventSource; }
  * Keyboard (⌘ = Ctrl): arrows move the selection, Enter or ⌘↓ opens it, ⌘↑ / Backspace goes to the
  * enclosing folder, ⌘[ ⌘] / Alt+←→ go back and forward, ⌘A selects all, Delete or ⌘⌫ moves to the
  * trash, ⇧⌘N creates a folder, ⌘H shows hidden files, ⌘N opens another window and ⌘W closes it.
+ * ⌘I shows the info of the selected files (of the folder, if there are none: see InfoWindow).
  * ⇧⌘H, ⇧⌘D, ⇧⌘O, ⇧⌘L and ⇧⌘C go to Home, Desktop, Documents, Downloads and the system disk.
  *
  * A file is renamed in place (see RenameField, in both views) with F2, the context menu's Rename,
@@ -127,6 +128,9 @@ public:
 
     /// Creates a new folder here and selects it.
     void newFolder() noexcept;
+
+    /// Shows the info of the selected files (see InfoWindow), or of the folder shown if there are none.
+    void infoSelection() noexcept;
 
     /// Edits the name of the only file selected (see RenameField).
     void renameSelection() noexcept;

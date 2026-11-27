@@ -38,7 +38,7 @@ FolderListHeader::Title::Title(const char *text, FolderListHeader &header, Colum
     box.layout().setAlignItems(YGAlignCenter);
     box.layout().setHeightPercent(100.f);
     box.layout().setFlexShrink(0.f);
-    label.setFontSize(11.f);
+    label.setFontSize(12.f);
     label.setFontStyle(SkFontStyle(SkFontStyle::kSemiBold_Weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
     label.setTextColor(AKTheme::SecondaryLabel);
     label.setTruncates(true); // "Date Modi…" in a narrow column (titles don't clip)

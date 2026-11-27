@@ -41,6 +41,19 @@ MenuBar::MenuBar() noexcept
     m_shortcuts.push_back({ KEY_O, false, m_open, [desk]{ if (auto *bg { desk->iconsBackground() }) bg->openSelection(); } });
     m_openWith = addMenu(m_file.get(), "Open With");
     addDivider(m_file.get());
+
+    // Nothing selected: the desktop folder's
+    const auto info = [desk]{
+        auto *bg { desk->iconsBackground() };
+
+        if (const auto entries { bg ? bg->selectedEntries() : std::vector<const DeskEntry*> {} }; !entries.empty())
+            desk->showInfo(entries);
+        else
+            desk->showInfo(desk->desktopDir());
+    };
+    addAction(m_file.get(), "Get Info", "⌘I", info);
+    m_shortcuts.push_back({ KEY_I, false, nullptr, info });
+    addDivider(m_file.get());
     m_trash = addAction(m_file.get(), "Move to Trash", "⌘⌫", [desk]{ if (auto *bg { desk->iconsBackground() }) bg->trashSelection(); });
     m_shortcuts.push_back({ KEY_BACKSPACE, false, m_trash, [desk]{ if (auto *bg { desk->iconsBackground() }) bg->trashSelection(); } });
     const auto eject = [desk]{

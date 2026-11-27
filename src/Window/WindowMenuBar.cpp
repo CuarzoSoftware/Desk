@@ -35,6 +35,8 @@ WindowMenuBar::WindowMenuBar(FolderWindow &window) noexcept : m_window(window)
     m_open = addAction(file.get(), "Open", "⌘O", [w]{ w->openSelection(); });
     m_openNewWindow = addAction(file.get(), "Open in New Window", "", [w]{ w->openSelection(true); });
     addDivider(file.get());
+    addAction(file.get(), "Get Info", "⌘I", [w]{ w->infoSelection(); }); // Nothing selected: the folder's
+    addDivider(file.get());
     m_rename = addAction(file.get(), "Rename", "F2", [w]{ w->renameSelection(); });
     m_trash = addAction(file.get(), "Move to Trash", "⌘⌫", [w]{ w->trashSelection(); });
     addDivider(file.get());

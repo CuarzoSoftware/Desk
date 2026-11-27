@@ -51,6 +51,24 @@ Folders and disks opened from the desktop, the dock's Desk tile or the Go menu o
 - The window follows the folder's changes. If the folder goes away (deleted, its disk ejected), it
   shows the closest folder that still exists.
 
+## Get Info
+
+⌘I (Ctrl+I), **File > Get Info** or the right click menu shows the info of the selected files,
+folders or disks, each in its own window, like Finder's. With nothing selected it's the folder
+shown (or the desktop folder). Other apps can ask for it too
+(`org.freedesktop.FileManager1.ShowItemProperties`).
+
+- **General:** kind, size (folders are added up in the background), where, created and modified.
+  **Locked** removes its write permissions.
+- **More Info:** last opened, a picture's dimensions, a link's original, a disk's format and space.
+- **Name & Extension:** type another name and press Enter to rename it.
+- **Open with:** choose an app and click **Change All…** to make it the default for every file of
+  that type.
+- **Preview** and **Sharing & Permissions** (what the owner, the group and everyone can do).
+
+Click a section's title to collapse or expand it: the window remembers them (`[Info] Collapsed` in
+the settings).
+
 ## Settings
 
 Settings are stored in `$XDG_CONFIG_HOME/cz-desk/desk.conf` (`~/.config/cz-desk/desk.conf` by

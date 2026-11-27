@@ -1118,6 +1118,7 @@ void Background::openItemsMenu(const CZPointerButtonEvent &event) noexcept
     m_menu->open(*this, SkIPoint::Make(Int32(pos.x()), Int32(pos.y())), event, [this, entries](ContextMenu &menu){
         auto *desk { GetDesk() };
         menu.addAction("Open", [this]{ openSelection(); });
+        menu.addAction("Get Info", [this]{ GetDesk()->showInfo(selectedEntries()); });
 
         const bool single { entries.size() == 1 };
         const DeskEntry *first { entries.front() };
@@ -1190,6 +1191,7 @@ void Background::openDesktopMenu(const CZPointerButtonEvent &event) noexcept
         if (m_showsIcons)
         {
             menu.addAction("New Folder", [this]{ newFolder(); });
+            menu.addAction("Get Info", []{ GetDesk()->showInfo(GetDesk()->desktopDir()); });
             menu.addAction("Paste", []{ GetDesk()->pasteInto(GetDesk()->desktopDir()); }, desk->canPaste());
             menu.addDivider();
         }

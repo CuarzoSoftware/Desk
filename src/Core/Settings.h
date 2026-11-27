@@ -1,6 +1,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
+#include <set>
 #include <Core/Types.h>
 #include <CZ/skia/core/SkPoint.h>
 #include <filesystem>
@@ -86,6 +87,10 @@ public:
      */
     DeskListColumns listColumns;
     std::optional<Int32> listNameOffset;
+
+    /// The sections collapsed in the info windows (see InfoWindow), remembered like Finder does:
+    /// "General", "MoreInfo", "Name", "OpenWith", "Preview" or "Permissions".
+    std::set<std::string> infoCollapsed { "Preview", "Permissions" };
 
     /// The folders in the Favorites of the folder windows' sidebars, in order (see Desk::favorites()).
     /// None saved yet: the defaults (home and the user folders).

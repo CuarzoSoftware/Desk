@@ -69,7 +69,7 @@ constexpr Int32 DESK_WINDOW_ICON_SIZE   { 64 };  // Finder's default icon view s
 constexpr Int32 DESK_WINDOW_CELL_WIDTH  { 104 };
 constexpr Int32 DESK_WINDOW_GRID_PADDING { 14 }; // Around the grid
 constexpr Int32 DESK_WINDOW_GRID_GAP    { 6 };   // Between rows
-constexpr Int32 DESK_WINDOW_LABEL_FONT_SIZE { 12 };
+constexpr Int32 DESK_WINDOW_LABEL_FONT_SIZE { 13 };
 // List view (see FolderListRow): the columns after the name, and the row content
 constexpr Int32 DESK_LIST_DATE_WIDTH    { 180 };
 constexpr Int32 DESK_LIST_SIZE_WIDTH    { 84 };
@@ -81,9 +81,9 @@ constexpr Int32 DESK_LIST_GAP           { 6 };   // Between columns
 constexpr Int32 DESK_LIST_TEXT_INSET    { 8 };   // Text of the columns after the name, from their left edge (after the header's divider)
 constexpr Int32 DESK_LIST_ICON_SIZE     { 16 };
 constexpr Int32 DESK_LIST_PADDING       { 10 };  // Inside a row, left and right
-constexpr Int32 DESK_LIST_ROW_HEIGHT    { 24 };
+constexpr Int32 DESK_LIST_ROW_HEIGHT    { 26 };
 constexpr Int32 DESK_LIST_HEADER_HEIGHT { 26 };
-constexpr Int32 DESK_LIST_FONT_SIZE     { 13 };
+constexpr Int32 DESK_LIST_FONT_SIZE     { 14 };
 constexpr Int32 DESK_WINDOW_LIST_INSET  { 8 };   // The list's content padding (rows inset from the edges)
 
 // Icons in windows: a faint shadow (over a plain background, not a picture), at DESK_WINDOW_ICON_SIZE

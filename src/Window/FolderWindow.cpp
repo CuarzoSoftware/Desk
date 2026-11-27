@@ -216,7 +216,7 @@ FolderWindow::Content::Content(AKNode *parent) noexcept : AKSolidColor(AKTheme::
     toolbar.layout().setGap(YGGutterColumn, 2.f);
 
     const SkRegion empty;
-    title.setFontSize(15.f);
+    title.setFontSize(16.f);
     title.setFontStyle(SkFontStyle(SkFontStyle::kBold_Weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
     title.setTextColor(AKTheme::Label);
     title.layout().setMargin(YGEdgeLeft, 8.f);
@@ -1859,6 +1859,10 @@ void FolderWindow::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
         if (ctrl)
             openSelection();
         break;
+    case KEY_I:
+        if (ctrl && !e.isRepeat)
+            infoSelection();
+        break;
     case KEY_H:
         if (ctrl)
             setShowsHidden(!m_showsHidden);
@@ -1877,6 +1881,14 @@ void FolderWindow::keyboardKeyEvent(const CZKeyboardKeyEvent &e)
 }
 
 /* ------------------------------------------ Menus ------------------------------------------ */
+
+void FolderWindow::infoSelection() noexcept
+{
+    if (const auto entries { selectedEntries() }; !entries.empty())
+        GetDesk()->showInfo(entries);
+    else
+        GetDesk()->showInfo(m_dir);
+}
 
 void FolderWindow::openItemsMenu(const CZPointerButtonEvent &event) noexcept
 {
@@ -1905,6 +1917,8 @@ void FolderWindow::openItemsMenu(const CZPointerButtonEvent &event) noexcept
 
         if (single && folder)
             menu.addAction("Open in New Window", [this]{ openSelection(true); });
+
+        menu.addAction("Get Info", [this]{ infoSelection(); });
 
         // Other apps that can open it (the default one is "Open").
         if (single && !folder && !first.launcher)
@@ -1973,6 +1987,7 @@ void FolderWindow::openFolderMenu(const CZPointerButtonEvent &event) noexcept
 
     m_menu->open(*this, SkIPoint::Make(Int32(pos.x()), Int32(pos.y())), event, [this](ContextMenu &menu){
         menu.addAction("New Folder", [this]{ newFolder(); });
+        menu.addAction("Get Info", [dir = m_dir]{ GetDesk()->showInfo(dir); });
         menu.addAction("Paste", [this]{ paste(); }, GetDesk()->canPaste());
         menu.addDivider();
         menu.addAction("Show Hidden Files", [this]{ setShowsHidden(!m_showsHidden); }).setChecked(m_showsHidden);

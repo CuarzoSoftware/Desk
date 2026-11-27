@@ -140,6 +140,22 @@ void Settings::load() noexcept
     if (auto v { value("Windows", "View") })
         listView = *v == "List";
 
+    // Comma separated (empty: every section expanded)
+    if (auto v { value("Info", "Collapsed") })
+    {
+        infoCollapsed.clear();
+
+        for (size_t start { 0 }; start <= v->size();)
+        {
+            const size_t end { std::min(v->find(',', start), v->size()) };
+
+            if (end > start)
+                infoCollapsed.insert(v->substr(start, end - start));
+
+            start = end + 1;
+        }
+    }
+
     if (auto v { value("Windows", "NameOffset") })
         if (Int32 offset { 0 }; std::from_chars(v->data(), v->data() + v->size(), offset).ec == std::errc())
             listNameOffset = std::clamp(offset, -100000, 100000);
@@ -212,6 +228,12 @@ void Settings::save() noexcept
         out << "DateWidth=" << listColumns.date << '\n';
         out << "SizeWidth=" << listColumns.size << '\n';
         out << "KindWidth=" << listColumns.kind << "\n\n";
+        out << "[Info]\nCollapsed=";
+
+        for (auto it { infoCollapsed.begin() }; it != infoCollapsed.end(); it++)
+            out << (it == infoCollapsed.begin() ? "" : ",") << *it;
+
+        out << "\n\n";
         if (favorites)
         {
             out << "[Favorites]\n";

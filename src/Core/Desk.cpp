@@ -6,6 +6,7 @@
 #include <Surfaces/Background.h>
 #include <Core/MenuBar.h>
 #include <Window/FolderWindow.h>
+#include <Window/InfoWindow.h>
 #include <Core/FolderScanner.h>
 #include <CZ/Marco/MScreen.h>
 #include <CZ/XDG/XDGDesktopEntry.h>
@@ -92,6 +93,7 @@ Desk::Desk() noexcept
 
 Desk::~Desk() noexcept
 {
+    m_infoWindows.clear();
     m_windows.clear();
     scanner.reset();
     menuBar.reset();
@@ -296,6 +298,57 @@ bool Desk::announceFromIcon(const std::string &title, const IconOrigin &origin) 
 void Desk::destroyClosedWindows() noexcept
 {
     std::erase_if(m_windows, [](const auto &window){ return !window->mapped(); });
+    std::erase_if(m_infoWindows, [](const auto &window){ return !window->mapped(); });
+}
+
+void Desk::showInfo(const std::vector<const DeskEntry*> &entries) noexcept
+{
+    if (!m_windowsTimer)
+        m_windowsTimer = std::make_unique<CZTimer>([this](CZTimer *){ destroyClosedWindows(); });
+
+    // Like Finder: a window each (not that many at once, though)
+    static constexpr size_t MaxAtOnce { 10 };
+    size_t opened { 0 };
+
+    for (const DeskEntry *entry : entries)
+    {
+        const auto shown { std::find_if(m_infoWindows.begin(), m_infoWindows.end(), [entry](const auto &window){
+            return window->mapped() && window->path() == entry->path; }) };
+
+        if (shown != m_infoWindows.end())
+        {
+            (*shown)->activate(); // Read again once activated
+            continue;
+        }
+
+        if (opened++ == MaxAtOnce)
+            break;
+
+        Log(CZInfo, CZLN, "Showing the info of {}", entry->path.string());
+        auto &window { m_infoWindows.emplace_back(std::make_unique<InfoWindow>(*entry)) };
+
+        // Closed (unmapped): destroyed on the next loop iteration
+        window->onMappedChanged.subscribe(window.get(), [this]{ m_windowsTimer->start(0); });
+        window->setMapped(true);
+        window->setKeyboardFocus(true);
+    }
+}
+
+void Desk::showInfo(const fs::path &dir) noexcept
+{
+    // A disk's mount point: the disk
+    for (const DeskEntry *volume : volumes())
+        if (volume->path == dir)
+            return showInfo(std::vector<const DeskEntry*> { volume });
+
+    std::error_code ec;
+    const fs::directory_entry file { dir, ec };
+
+    if (ec || !file.exists(ec))
+        return;
+
+    const DeskEntry entry { EntryFor(*xdgkit, file) };
+    showInfo(std::vector<const DeskEntry*> { &entry });
 }
 
 std::vector<const DeskEntry*> Desk::volumes() const noexcept
@@ -471,7 +524,9 @@ static fs::path PathFromURI(const std::string &uri) noexcept
     return fs::path(path).lexically_normal();
 }
 
-static int ShowURIs(sd_bus_message *m, bool items)
+enum class ShowMode { Folders, Items, Properties };
+
+static int ShowURIs(sd_bus_message *m, ShowMode mode)
 {
     std::vector<std::string> uris;
     char **strv { nullptr };
@@ -508,8 +563,11 @@ static int ShowURIs(sd_bus_message *m, bool items)
             continue;
         }
 
+        // ShowItemProperties: its info window
+        if (mode == ShowMode::Properties)
+            GetDesk()->showInfo(path);
         // ShowItems: the folder holding it, with it selected
-        if (items && path.has_parent_path() && path != path.root_path())
+        else if (mode == ShowMode::Items && path.has_parent_path() && path != path.root_path())
             GetDesk()->openFolder(path.parent_path(), false, path.filename().string(), token);
         else
             GetDesk()->openFolder(path, false, {}, token);
@@ -518,15 +576,16 @@ static int ShowURIs(sd_bus_message *m, bool items)
     return sd_bus_reply_method_return(m, "");
 }
 
-static int ShowFoldersMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, false); }
-static int ShowItemsMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, true); }
+static int ShowFoldersMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, ShowMode::Folders); }
+static int ShowItemsMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, ShowMode::Items); }
+static int ShowItemPropertiesMethod(sd_bus_message *m, void *, sd_bus_error *) { return ShowURIs(m, ShowMode::Properties); }
 
 static const sd_bus_vtable FileManagerVTable[]
 {
     SD_BUS_VTABLE_START(0),
     SD_BUS_METHOD("ShowFolders", "ass", "", ShowFoldersMethod, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ShowItems", "ass", "", ShowItemsMethod, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("ShowItemProperties", "ass", "", ShowItemsMethod, SD_BUS_VTABLE_UNPRIVILEGED), // No properties window yet
+    SD_BUS_METHOD("ShowItemProperties", "ass", "", ShowItemPropertiesMethod, SD_BUS_VTABLE_UNPRIVILEGED), // See InfoWindow
     SD_BUS_VTABLE_END
 };
 
@@ -827,11 +886,43 @@ std::vector<DeskEntry> Desk::scanFolder(const fs::path &dir, bool hidden) const 
     return ScanFolder(*xdgkit, dir, hidden);
 }
 
+DeskEntry Desk::EntryFor(XDGKit &kit, const fs::directory_entry &dirEntry) noexcept
+{
+    auto &mime { kit.mimeDatabase() };
+
+    // A folder given with a trailing separator has no file name
+    const fs::path path { dirEntry.path().has_filename() ? dirEntry.path() : dirEntry.path().parent_path() };
+    const std::string name { path.filename().empty() ? path.string() : path.filename().string() };
+
+    DeskEntry file;
+    file.kind = DeskEntry::Kind::File;
+    file.path = path;
+    file.key = name;
+    file.name = name;
+    file.mimeType = mime.typeForFile(file.path);
+
+    file.kindName = file.mimeType == "inode/directory" ? "Folder" : mime.description(file.mimeType);
+
+    if (std::error_code sec; dirEntry.is_regular_file(sec))
+        file.size = dirEntry.file_size(sec);
+
+    if (std::error_code tec; true)
+        if (const auto time { dirEntry.last_write_time(tec) }; !tec)
+            file.modified = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
+
+    if (file.mimeType == "application/x-desktop" || name.ends_with(".desktop"))
+    {
+        if ((file.launcher = XDGDesktopEntry::Load(file.path)) && !file.launcher->name.empty())
+            file.name = file.launcher->name;
+    }
+
+    return file;
+}
+
 std::vector<DeskEntry> Desk::ScanFolder(XDGKit &kit, const fs::path &dir, bool hidden) noexcept
 {
     std::vector<DeskEntry> files;
     std::error_code ec;
-    auto &mime { kit.mimeDatabase() };
 
     for (const auto &dirEntry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec))
     {
@@ -841,29 +932,7 @@ std::vector<DeskEntry> Desk::ScanFolder(XDGKit &kit, const fs::path &dir, bool h
         if (name.empty() || (!hidden && (name.front() == '.' || name.back() == '~')))
             continue;
 
-        DeskEntry file;
-        file.kind = DeskEntry::Kind::File;
-        file.path = dirEntry.path();
-        file.key = name;
-        file.name = name;
-        file.mimeType = mime.typeForFile(file.path);
-
-        file.kindName = file.mimeType == "inode/directory" ? "Folder" : mime.description(file.mimeType);
-
-        if (std::error_code sec; dirEntry.is_regular_file(sec))
-            file.size = dirEntry.file_size(sec);
-
-        if (std::error_code tec; true)
-            if (const auto time { dirEntry.last_write_time(tec) }; !tec)
-                file.modified = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(time));
-
-        if (file.mimeType == "application/x-desktop" || name.ends_with(".desktop"))
-        {
-            if ((file.launcher = XDGDesktopEntry::Load(file.path)) && !file.launcher->name.empty())
-                file.name = file.launcher->name;
-        }
-
-        files.emplace_back(std::move(file));
+        files.emplace_back(EntryFor(kit, dirEntry));
     }
 
     // Like Finder: natural-ish, case-insensitive.

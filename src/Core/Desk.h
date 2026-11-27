@@ -24,6 +24,7 @@ class Background;
 namespace CZ { class MDNDOffer; }
 class MenuBar;
 class FolderWindow;
+class InfoWindow;
 class FolderScanner;
 /// Where something was opened from on the desktop: an icon's rect, in global coordinates.
 struct IconOrigin
@@ -164,6 +165,18 @@ public:
 
     /// The open folder windows.
     const std::vector<std::unique_ptr<FolderWindow>> &windows() const noexcept { return m_windows; }
+
+    /**
+     * @brief Shows the info of files, folders or disks, each in its own window (see InfoWindow),
+     *        like Finder's Get Info. One already shown is activated instead.
+     */
+    void showInfo(const std::vector<const DeskEntry*> &entries) noexcept;
+
+    /// showInfo() of the file, folder or disk (a mount point) at @p path.
+    void showInfo(const std::filesystem::path &path) noexcept;
+
+    /// The entry of a file (see ScanFolder()), keyed by its file name.
+    static DeskEntry EntryFor(XDGKit &kit, const std::filesystem::directory_entry &file) noexcept;
 
     /// The mounted disks (the system disk first), as shown on the desktop.
     std::vector<const DeskEntry*> volumes() const noexcept;
@@ -332,6 +345,7 @@ private:
 
     // Closed windows are destroyed later (not from their own handlers)
     std::vector<std::unique_ptr<FolderWindow>> m_windows;
+    std::vector<std::unique_ptr<InfoWindow>> m_infoWindows;
     std::unique_ptr<CZTimer> m_windowsTimer;
     std::unique_ptr<CZTimer> m_deactivatedTimer; // See windowDeactivated()
     void destroyClosedWindows() noexcept;

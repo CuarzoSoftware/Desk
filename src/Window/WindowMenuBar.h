@@ -19,7 +19,7 @@ class FolderWindow;
  * Each window has its own (an HNTopbar of Desk's Heaven client), shown while it's the active one
  * (activate()); the desktop's are MenuBar's. They act on their window:
  *
- * - **File**: New Window, New Folder, Open, Open in New Window, Rename, Move to Trash, Close Window
+ * - **File**: New Window, New Folder, Open, Open in New Window, Get Info, Rename, Move to Trash, Close Window
  * - **Edit**: Cut, Copy, Paste (files, see Desk::copyFiles()), Select All (Undo and Redo disabled)
  * - **View**: as Icons / as List, Sort By (Name, Date Modified, Size, Kind), Show Hidden Files
  * - **Go**: Back, Forward, Enclosing Folder, the user folders and Computer

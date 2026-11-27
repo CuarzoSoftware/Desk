@@ -13,9 +13,32 @@ namespace fs = std::filesystem;
 // Like Finder's: icons without a tile, in the accent color
 static const CZAdaptiveColor NoTile { 0 };
 
+// Larger than Kay's defaults (made for icons on tiles, like Settings'): bare icons look small
+static constexpr SkScalar RowHeight { 30.f };
+static constexpr SkScalar FontSize  { 14.f };
+static constexpr UInt32   IconSize  { 18 };
+static constexpr SkScalar TitleSize { 12.f };
+
+// The section's title, larger too (still at the bottom of its row, see AKSidebarSection)
+static void StyleTitle(AKSidebarSection &section) noexcept
+{
+    section.titleText.setFontSize(TitleSize);
+    section.titleText.layout().setMargin(YGEdgeTop, AKSidebarSection::TitleHeight - TitleSize * 1.3f - 4.f);
+}
+
+static AKSidebarItem &Styled(AKSidebarItem &item) noexcept
+{
+    item.layout().setHeight(RowHeight);
+    item.label.setFontSize(FontSize);
+    item.tile.icon.setSize(IconSize);
+    return item;
+}
+
 FolderSidebar::FolderSidebar(AKNode *parent) noexcept : MSidebar(parent)
 {
     setWidth(DESK_WINDOW_SIDEBAR_WIDTH);
+    StyleTitle(favorites);
+    StyleTitle(locations);
 
     // The header's area, over the list (added last): its shadow falls on the rows
     const SkRegion empty;
@@ -131,7 +154,7 @@ void FolderSidebar::updateFavorites() noexcept
         if (name.empty())
             name = dir.string(); // The root
 
-        favorites.addItem(name, icon, NoTile, dir.string()).setIconColor(AKTheme::ControlAccent);
+        Styled(favorites.addItem(name, icon, NoTile, dir.string())).setIconColor(AKTheme::ControlAccent);
         m_looks[dir.string()] = { name, icon };
     }
 
@@ -275,11 +298,12 @@ void FolderSidebar::startDrag(const std::string &dir) noexcept
     icon.icon.setIconFromName(look.icon);
     icon.icon.setColor(AKTheme::ControlAccent.resolve(scheme));
     icon.label.setText(look.name);
-    icon.label.setFontSize(13.f);
+    icon.label.setFontSize(FontSize);
+    icon.icon.setSize(IconSize);
     icon.label.setTextColor(AKTheme::Label);
 
     const SkIRect rowRect { row->worldRect() };
-    const Int32 width { std::max(rowRect.width(), 16 + 6 + 16 + Int32(icon.label.layout().width().value)) };
+    const Int32 width { std::max(rowRect.width(), 16 + Int32(IconSize) + 6 + Int32(icon.label.layout().width().value)) };
     icon.box.layout().setWidth(width);
     icon.box.layout().setHeight(rowRect.height());
     m_dnd->layout().setWidth(width);
@@ -328,7 +352,7 @@ void FolderSidebar::updateLocations() noexcept
         else if (volume->usb)
             icon = "usb";
 
-        auto &item { locations.addItem(volume->name, icon, NoTile, FolderWindow::Normalized(volume->path).string()) };
+        auto &item { Styled(locations.addItem(volume->name, icon, NoTile, FolderWindow::Normalized(volume->path).string())) };
         item.setIconColor(AKTheme::SecondaryLabel);
 
         if (!volume->internal)

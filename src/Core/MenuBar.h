@@ -17,7 +17,7 @@
  * The compositor shows them while no window is active (e.g. after clicking the desktop). They act
  * on the desktop of the primary screen: its selection, icons and background.
  *
- * - **File**: New Window, New Folder, Open, Open With, Move to Trash, Eject, Set Desktop Picture
+ * - **File**: New Window, New Folder, Open, Open With, Get Info, Move to Trash, Eject, Set Desktop Picture
  * - **Edit**: Cut, Copy, Paste (files, see Desk::copyFiles()), Select All (Undo and Redo disabled)
  * - **View**: Sort By (Name, Kind, Size, Custom), Clean Up, icon size, desktop picture options
  * - **Go**: the user folders, Computer and Trash
